@@ -27,11 +27,11 @@ export function SaleForm({ onDone, sale }: { onDone: () => void; sale?: DailySal
   );
   const diff = sum - total;
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const saved = sale
-      ? updateSale(sale.id, { date, total, distribution, notes })
-      : addSale({ date, total, distribution, notes });
+      ? await updateSale(sale.id, { date, total, distribution, notes })
+      : await addSale({ date, total, distribution, notes });
     if (saved) onDone();
   }
 
@@ -95,11 +95,11 @@ export function ExpenseForm({ onDone, expense }: { onDone: () => void; expense?:
   const [value, setValue] = useState(expense?.value ?? 0);
   const [notes, setNotes] = useState(expense?.notes ?? "");
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const saved = expense
-      ? updateExpense(expense.id, { date, category, detail, paymentMethod, value, notes })
-      : addExpense({ date, category, detail, paymentMethod, value, notes });
+      ? await updateExpense(expense.id, { date, category, detail, paymentMethod, value, notes })
+      : await addExpense({ date, category, detail, paymentMethod, value, notes });
     if (saved) onDone();
   }
 

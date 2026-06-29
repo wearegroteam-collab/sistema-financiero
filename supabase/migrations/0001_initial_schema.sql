@@ -161,6 +161,23 @@ as $$
   select role from public.users where id = auth.uid()
 $$;
 
+create or replace function public.has_super_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.users
+    where role = 'super_admin'
+      and active = true
+  )
+$$;
+
+grant execute on function public.has_super_admin() to anon, authenticated;
+
 create or replace function public.month_is_closed(target_business_id uuid, target_date date)
 returns boolean
 language sql
@@ -231,6 +248,9 @@ with check (public.current_role() = 'super_admin');
 create policy "Admins can update own business" on public.businesses
 for update using (id = public.current_business_id() and public.current_role() = 'admin');
 
+create policy "First setup can create first business" on public.businesses
+for insert with check (public.has_super_admin() = false);
+
 create policy "Super admins can read all users" on public.users
 for select using (public.current_role() = 'super_admin');
 
@@ -253,17 +273,44 @@ with check (
   and role = 'accountant'
 );
 
+create policy "First setup can create first super admin profile" on public.users
+for insert with check (
+  public.has_super_admin() = false
+  and id = auth.uid()
+  and role = 'super_admin'
+);
+
 create policy "Read payment methods" on public.payment_methods
 for select using (business_id = public.current_business_id());
+
+create policy "Super admins read all payment methods" on public.payment_methods
+for select using (public.current_role() = 'super_admin');
 
 create policy "Admins manage payment methods" on public.payment_methods
 for all using (business_id = public.current_business_id() and public.current_role() in ('super_admin', 'admin'));
 
+create policy "Super admins manage all payment methods" on public.payment_methods
+for all using (public.current_role() = 'super_admin')
+with check (public.current_role() = 'super_admin');
+
+create policy "First setup can create payment methods" on public.payment_methods
+for insert with check (public.has_super_admin() = false);
+
 create policy "Read categories" on public.categories
 for select using (business_id = public.current_business_id());
 
+create policy "Super admins read all categories" on public.categories
+for select using (public.current_role() = 'super_admin');
+
 create policy "Admins manage categories" on public.categories
 for all using (business_id = public.current_business_id() and public.current_role() in ('super_admin', 'admin'));
+
+create policy "Super admins manage all categories" on public.categories
+for all using (public.current_role() = 'super_admin')
+with check (public.current_role() = 'super_admin');
+
+create policy "First setup can create categories" on public.categories
+for insert with check (public.has_super_admin() = false);
 
 create policy "Read daily sales" on public.daily_sales
 for select using (business_id = public.current_business_id());
@@ -300,13 +347,20 @@ create policy "Super admins close any month" on public.monthly_closures
 for insert with check (public.current_role() = 'super_admin');
 
 create policy "Super admins reopen months" on public.monthly_closures
-for update using (business_id = public.current_business_id() and public.current_role() = 'super_admin');
+for update using (public.current_role() = 'super_admin');
 
 create policy "Read settings" on public.settings
 for select using (business_id = public.current_business_id());
 
+create policy "Super admins read all settings" on public.settings
+for select using (public.current_role() = 'super_admin');
+
 create policy "Admins manage settings" on public.settings
 for all using (business_id = public.current_business_id() and public.current_role() in ('super_admin', 'admin'));
+
+create policy "Super admins manage all settings" on public.settings
+for all using (public.current_role() = 'super_admin')
+with check (public.current_role() = 'super_admin');
 
 create policy "Read audit logs" on public.audit_logs
 for select using (business_id = public.current_business_id());

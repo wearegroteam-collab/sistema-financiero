@@ -26,11 +26,16 @@ Luego abre `http://localhost:3000`.
 ## Supabase
 
 1. Crea un proyecto en Supabase.
-2. Copia `.env.example` a `.env.local` y completa `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+2. Copia `.env.example` a `.env.local` y completa:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY` solo en servidor, necesaria para crear usuarios Auth desde el panel.
 3. Ejecuta la migracion `supabase/migrations/0001_initial_schema.sql`.
-4. Opcionalmente ejecuta `supabase/seed.sql` para crear Hangar, categorias y metodos de pago.
+4. Abre la app. Si no existe ningun Super Admin, aparecera la pantalla de configuracion inicial.
 
-La UI local inicia sin movimientos, cierres ni usuarios de prueba. La carpeta `lib/supabase` y las migraciones dejan la base preparada para conectar Supabase Auth y datos reales.
+La app usa Supabase como fuente principal cuando existen las variables `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Si no existen, cae al estado local limpio solo como respaldo temporal de desarrollo.
+
+Para el primer Super Admin, desactiva confirmacion obligatoria de email en Supabase Auth durante el bootstrap o confirma el email antes de continuar, porque el perfil inicial necesita una sesion autenticada para insertar negocio, metodos, categorias y perfil.
 
 ## Roles operativos
 

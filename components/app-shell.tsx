@@ -38,7 +38,7 @@ type View = "dashboard" | "reports" | "history" | "closures" | "super_admin" | "
 
 export function AppShell() {
   const store = useStore();
-  const { state, business, activeUser, canWrite, canManageBusiness } = store;
+  const { state, business, activeUser, canWrite, canManageBusiness, useSupabase } = store;
   const [view, setView] = useState<View>("dashboard");
   const [saleOpen, setSaleOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
@@ -74,15 +74,25 @@ export function AppShell() {
             </div>
           </div>
           <div className="hidden lg:mt-6 lg:grid lg:gap-3">
-            <Field label="Usuario activo">
-              <select className={inputClass} value={activeUser.id} onChange={(event) => store.switchUser(event.target.value)}>
-                {state.users.map((user) => (
-                  <option key={user.id} value={user.id} disabled={user.active === false}>
-                    {user.name} · {roleLabels[user.role]}{user.active === false ? " (inactivo)" : ""}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {useSupabase ? (
+              <div className="rounded-md border border-line px-3 py-2 text-xs text-muted">
+                {activeUser.name}
+                <span className="mt-1 block font-medium text-ink">{roleLabels[activeUser.role]}</span>
+                <Button className="mt-3 w-full" variant="secondary" onClick={() => void store.signOut()}>
+                  Cerrar sesion
+                </Button>
+              </div>
+            ) : (
+              <Field label="Usuario activo">
+                <select className={inputClass} value={activeUser.id} onChange={(event) => store.switchUser(event.target.value)}>
+                  {state.users.map((user) => (
+                    <option key={user.id} value={user.id} disabled={user.active === false}>
+                      {user.name} · {roleLabels[user.role]}{user.active === false ? " (inactivo)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
           </div>
           {activeUser.role === "super_admin" ? (
             <div className="mt-4 hidden lg:block">
