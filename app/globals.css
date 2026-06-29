@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f4f7fa;
+  color: #101820;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.86), rgba(244,247,250,0.96) 36%),
+    #f4f7fa;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+@layer components {
+  .focus-ring {
+    @apply outline-none ring-2 ring-transparent transition focus-visible:ring-info/30;
+  }
+
+  .surface {
+    @apply border border-line bg-white shadow-soft;
+  }
+}
