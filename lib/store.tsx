@@ -59,7 +59,7 @@ type StoreContextValue = {
   closeMonth: (monthKey: string, notes?: string) => Promise<void> | void;
   reopenMonth: (closureId: string) => Promise<void> | void;
   updateSettings: (business: Business, categories: ExpenseCategory[], methods: PaymentMethod[]) => Promise<void> | void;
-  createBusiness: (business: Omit<Business, "id" | "active"> & { active?: boolean }, admin?: { name: string; email: string; password?: string }) => Promise<void> | void;
+  createBusiness: (business: Omit<Business, "id" | "active"> & { active?: boolean }, admin?: { name: string; email: string }) => Promise<void> | void;
   updateBusiness: (business: Business) => Promise<void> | void;
   deactivateBusiness: (businessId: string) => Promise<void> | void;
   deleteBusiness: (businessId: string) => Promise<void> | void;
@@ -101,7 +101,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(useSupabase);
   const [setupRequired, setSetupRequired] = useState(false);
 
-  const business = state.businesses.find((item) => item.id === state.currentBusinessId) ?? state.businesses[0] ?? fallbackBusiness;
+  const business = state.currentBusinessId
+    ? state.businesses.find((item) => item.id === state.currentBusinessId) ?? fallbackBusiness
+    : fallbackBusiness;
   const activeUser = state.users.find((user) => user.id === state.activeUserId) ?? state.users[0] ?? initialState.users[0];
   const canWrite = activeUser.active !== false && ["super_admin", "admin"].includes(activeUser.role);
   const canManageBusiness = activeUser.active !== false && activeUser.role === "super_admin";
@@ -644,44 +646,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (supabase) {
-        const { data, error } = await supabase.from("businesses").insert({
-          name: newBusiness.name,
-          logo_url: newBusiness.logoUrl,
-          currency: newBusiness.currency,
-          timezone: newBusiness.timezone,
-          active: newBusiness.active ?? true,
-          admin_name: newBusiness.adminName,
-          admin_email: newBusiness.adminEmail,
-          phone: newBusiness.phone,
-        }).select("*").single();
-        if (error || !data) {
-          toast.error(error?.message ?? "No se pudo crear el negocio");
+        const token = session?.access_token;
+        if (!token) {
+          toast.error("Sesion no valida.");
           return;
         }
-        await Promise.all([
-          supabase.from("payment_methods").insert(paymentMethods.map((method) => ({ business_id: data.id, key: method.key, label: method.label, color: method.color }))),
-          supabase.from("categories").insert(expenseCategories.map((category) => ({ business_id: data.id, key: category.key, label: category.label, color: category.color }))),
-        ]);
-        await insertAudit("businesses", data.id, "create", "Negocio creado", undefined, data, data.id);
-        if (admin?.email && admin.name && session?.access_token) {
-          const response = await fetch("/api/admin/users", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({
-              businessId: data.id,
-              name: admin.name,
-              email: admin.email,
-              password: admin.password || "temporal123",
-              role: "admin",
-            }),
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok) {
-            toast.error(payload.error ?? "Negocio creado, pero no se pudo crear el administrador.");
-          }
+        const response = await fetch("/api/admin/businesses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            business: newBusiness,
+            admin,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          toast.error(payload.error ?? "No se pudo crear el negocio");
+          return;
         }
         await refresh();
         toast.success("Negocio creado");
@@ -694,7 +678,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             businessId: record.id,
             name: admin.name,
             email: admin.email,
-            password: admin.password || "temporal123",
             role: "admin",
             active: true,
           }

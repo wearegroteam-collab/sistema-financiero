@@ -21,13 +21,13 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const rawBusinessId = body.businessId == null ? "" : String(body.businessId);
-  const name = String(body.name ?? "");
-  const email = String(body.email ?? "");
+  const name = String(body.name ?? "").trim();
+  const email = String(body.email ?? "").trim().toLowerCase();
   const password = String(body.password ?? "");
   const role = String(body.role ?? "");
   const businessId = role === "super_admin" ? null : rawBusinessId;
 
-  if (!name || !email || !password || !["super_admin", "admin", "accountant"].includes(role) || (role !== "super_admin" && !businessId)) {
+  if (!name || !email || !["super_admin", "admin", "accountant"].includes(role) || (role !== "super_admin" && !businessId)) {
     return NextResponse.json({ error: "Datos de usuario incompletos." }, { status: 400 });
   }
 
@@ -61,15 +61,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No tienes permisos para crear este usuario." }, { status: 403 });
   }
 
-  const { data: created, error: createError } = await adminClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { name },
-  });
+  const redirectTo = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+  const { data: created, error: createError } = password
+    ? await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { name },
+      })
+    : await adminClient.auth.admin.inviteUserByEmail(
+        email,
+        redirectTo ? { data: { name }, redirectTo } : { data: { name } },
+      );
 
   if (createError || !created.user) {
-    return NextResponse.json({ error: createError?.message ?? "No se pudo crear el usuario Auth." }, { status: 400 });
+    return NextResponse.json({ error: createError?.message ?? "No se pudo invitar el usuario Auth." }, { status: 400 });
   }
 
   const { data: profile, error: profileError } = await adminClient

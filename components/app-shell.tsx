@@ -54,14 +54,17 @@ export function AppShell() {
   const superAdminManagingBusiness = activeUser.role === "super_admin" && hasActiveBusiness;
   const globalSuperAdmin = activeUser.role === "super_admin" && !hasActiveBusiness;
 
-  const nav = [
+  const financialNav = [
     { key: "dashboard", label: "Dashboard", icon: BarChart3 },
     { key: "reports", label: "Informes", icon: FileText },
     { key: "history", label: "Historial", icon: History },
     { key: "closures", label: "Cierres Mensuales", icon: CalendarCheck },
-    ...(activeUser.role === "super_admin" ? [{ key: "super_admin", label: "Super Admin", icon: Users } as const] : []),
     { key: "settings", label: "Configuracion", icon: Settings },
   ] as const;
+  const nav = globalSuperAdmin
+    ? [{ key: "super_admin", label: "Panel Super Admin", icon: Users } as const]
+    : financialNav;
+  const activeView: View = globalSuperAdmin ? "super_admin" : view;
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
@@ -73,7 +76,7 @@ export function AppShell() {
             </div>
             <div>
               <p className="text-sm text-muted">{globalSuperAdmin ? "Panel global" : "Restaurante"}</p>
-              <h1 className="text-lg font-semibold text-ink">{business.name}</h1>
+              <h1 className="text-lg font-semibold text-ink">{globalSuperAdmin ? "Super Admin" : business.name}</h1>
             </div>
           </div>
           <div className="hidden lg:mt-6 lg:grid lg:gap-3">
@@ -106,7 +109,7 @@ export function AppShell() {
                 key={item.key}
                 className={cn(
                   "focus-ring flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-muted transition hover:bg-panel hover:text-ink",
-                  view === item.key && "bg-ink text-white hover:bg-ink hover:text-white",
+                  activeView === item.key && "bg-ink text-white hover:bg-ink hover:text-white",
                 )}
                 onClick={() => setView(item.key)}
               >
@@ -136,9 +139,10 @@ export function AppShell() {
             <div>
               <p className="text-sm font-medium capitalize text-muted">{globalSuperAdmin ? "Administracion global" : monthName(activeMonth)}</p>
               <h2 className="text-2xl font-semibold tracking-normal text-ink">
-                {view === "dashboard" ? "Finanzas del mes activo" : nav.find((item) => item.key === view)?.label}
+                {activeView === "dashboard" ? "Finanzas del mes activo" : nav.find((item) => item.key === activeView)?.label}
               </h2>
             </div>
+            {!globalSuperAdmin ? (
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={() => setExpenseOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
                 <ReceiptText size={16} />
@@ -149,9 +153,10 @@ export function AppShell() {
                 Venta
               </Button>
             </div>
+            ) : null}
           </header>
 
-          {view === "dashboard" ? (
+          {activeView === "dashboard" ? (
             <Dashboard
               summary={summary}
               movements={movements}
@@ -160,16 +165,16 @@ export function AppShell() {
               onCloseMonth={() => setCloseMonthOpen(true)}
             />
           ) : null}
-          {view === "reports" ? <Reports /> : null}
-          {view === "history" ? (
+          {activeView === "reports" ? <Reports /> : null}
+          {activeView === "history" ? (
             <HistoryView
               onEdit={setEditingMovement}
               onDelete={setDeletingMovement}
             />
           ) : null}
-          {view === "closures" ? <MonthlyClosuresView onView={setViewingClosure} /> : null}
-          {view === "super_admin" && canManageBusiness ? <SuperAdminPanel /> : null}
-          {view === "settings" ? <SettingsView /> : null}
+          {activeView === "closures" ? <MonthlyClosuresView onView={setViewingClosure} /> : null}
+          {activeView === "super_admin" && canManageBusiness ? <SuperAdminPanel onEnterBusiness={() => setView("dashboard")} /> : null}
+          {activeView === "settings" ? <SettingsView /> : null}
         </div>
       </main>
       <Modal title="Registrar venta diaria" open={saleOpen} onClose={() => setSaleOpen(false)}>
@@ -861,7 +866,7 @@ function HistoryView({
   );
 }
 
-function SuperAdminPanel() {
+function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
   const {
     state,
     business,
@@ -889,7 +894,6 @@ function SuperAdminPanel() {
     businessId: business.id,
     name: "",
     email: "",
-    password: "",
     role: "admin" as Role,
   });
 
@@ -913,7 +917,7 @@ function SuperAdminPanel() {
           phone: businessForm.phone,
         },
         businessForm.adminName && businessForm.adminEmail
-          ? { name: businessForm.adminName, email: businessForm.adminEmail, password: "temporal123" }
+          ? { name: businessForm.adminName, email: businessForm.adminEmail }
           : undefined,
       );
     }
@@ -930,10 +934,9 @@ function SuperAdminPanel() {
       businessId: userForm.businessId,
       name: userForm.name,
       email: userForm.email,
-      password: userForm.password || "temporal123",
       role: userForm.role,
     });
-    setUserForm({ businessId: business.id, name: "", email: "", password: "", role: "admin" });
+    setUserForm({ businessId: business.id, name: "", email: "", role: "admin" });
   }
 
   return (
@@ -954,7 +957,16 @@ function SuperAdminPanel() {
                   </span>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => switchBusiness(item.id)} disabled={item.active === false}>Entrar</Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      switchBusiness(item.id);
+                      onEnterBusiness();
+                    }}
+                    disabled={item.active === false}
+                  >
+                    Entrar
+                  </Button>
                   <Button variant="secondary" onClick={() => {
                     setEditingBusiness(item);
                     setBusinessForm({
@@ -1023,21 +1035,20 @@ function SuperAdminPanel() {
             </Field>
             <Field label="Nombre"><input className={inputClass} value={userForm.name} onChange={(event) => setUserForm({ ...userForm, name: event.target.value })} required /></Field>
             <Field label="Email"><input className={inputClass} type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} required /></Field>
-            <Field label="Contrasena"><input className={inputClass} type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="temporal123 si queda vacio" /></Field>
             <Field label="Rol">
               <select
                 className={inputClass}
                 value={userForm.role}
                 onChange={(event) => {
                   const role = event.target.value as Role;
-                  setUserForm({ ...userForm, role, businessId: role === "super_admin" ? "" : userForm.businessId });
+                  setUserForm({ ...userForm, role, businessId: userForm.businessId });
                 }}
               >
                 <option value="admin">Admin del Negocio</option>
                 <option value="accountant">Contabilidad</option>
-                <option value="super_admin">Super Admin global</option>
               </select>
             </Field>
+            <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
             <Button type="submit">Crear usuario</Button>
           </form>
         </Section>
@@ -1121,7 +1132,7 @@ function SettingsView() {
   const [name, setName] = useState(business.name);
   const [currency, setCurrency] = useState(business.currency);
   const [timezone, setTimezone] = useState(business.timezone);
-  const [accountingUser, setAccountingUser] = useState({ name: "", email: "", password: "" });
+  const [accountingUser, setAccountingUser] = useState({ name: "", email: "" });
   const businessUsers = state.users.filter((user) => user.businessId === business.id);
 
   return (
@@ -1161,15 +1172,14 @@ function SettingsView() {
                   businessId: business.id,
                   name: accountingUser.name,
                   email: accountingUser.email,
-                  password: accountingUser.password || "temporal123",
                   role: "accountant",
                 });
-                setAccountingUser({ name: "", email: "", password: "" });
+                setAccountingUser({ name: "", email: "" });
               }}>
                 <h3 className="font-semibold text-ink">Crear usuario de Contabilidad</h3>
                 <Field label="Nombre"><input className={inputClass} value={accountingUser.name} onChange={(event) => setAccountingUser({ ...accountingUser, name: event.target.value })} required /></Field>
                 <Field label="Email"><input className={inputClass} type="email" value={accountingUser.email} onChange={(event) => setAccountingUser({ ...accountingUser, email: event.target.value })} required /></Field>
-                <Field label="Contrasena"><input className={inputClass} type="password" value={accountingUser.password} onChange={(event) => setAccountingUser({ ...accountingUser, password: event.target.value })} /></Field>
+                <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
                 <Button type="submit">Crear Contabilidad</Button>
               </form>
             ) : null}
