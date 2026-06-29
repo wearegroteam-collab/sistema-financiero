@@ -39,7 +39,7 @@ type View = "dashboard" | "reports" | "history" | "closures" | "super_admin" | "
 export function AppShell() {
   const store = useStore();
   const { state, business, activeUser, canWrite, canManageBusiness, useSupabase } = store;
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<View>(() => activeUser.role === "super_admin" ? "super_admin" : "dashboard");
   const [saleOpen, setSaleOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [closeMonthOpen, setCloseMonthOpen] = useState(false);
@@ -50,6 +50,7 @@ export function AppShell() {
   const summary = calculateMonth(state, business.id, activeMonth);
   const closed = isMonthClosed(state, business.id, activeMonth);
   const movements = buildMovements(state, business.id, activeMonth);
+  const hasActiveBusiness = Boolean(business.id);
 
   const nav = [
     { key: "dashboard", label: "Dashboard", icon: BarChart3 },
@@ -137,11 +138,11 @@ export function AppShell() {
               </h2>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => setExpenseOpen(true)} disabled={closed || !canWrite}>
+              <Button variant="secondary" onClick={() => setExpenseOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
                 <ReceiptText size={16} />
                 Gasto
               </Button>
-              <Button onClick={() => setSaleOpen(true)} disabled={closed || !canWrite}>
+              <Button onClick={() => setSaleOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
                 <Plus size={16} />
                 Venta
               </Button>
@@ -277,7 +278,7 @@ function Dashboard({
               {formatCurrency(summary.availableTotal, business.currency)}
             </p>
           </div>
-          <Button variant={closed ? "secondary" : "primary"} onClick={onCloseMonth} disabled={closed || !canWrite}>
+          <Button variant={closed ? "secondary" : "primary"} onClick={onCloseMonth} disabled={closed || !canWrite || !business.id}>
             {closed ? <Lock size={16} /> : <CalendarCheck size={16} />}
             {closed ? "Mes cerrado" : "Cerrar Mes"}
           </Button>
@@ -872,6 +873,7 @@ function SuperAdminPanel() {
     deactivateUser,
   } = useStore();
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(null);
+  const [deletingBusiness, setDeletingBusiness] = useState<Business | null>(null);
   const [businessForm, setBusinessForm] = useState({
     name: "",
     logoUrl: "",
@@ -916,6 +918,10 @@ function SuperAdminPanel() {
 
   function submitUser(event: FormEvent) {
     event.preventDefault();
+    if (!userForm.businessId && userForm.role !== "super_admin") {
+      toast.error("Selecciona un negocio para este usuario.");
+      return;
+    }
     createUser({
       businessId: userForm.businessId,
       name: userForm.name,
@@ -958,10 +964,16 @@ function SuperAdminPanel() {
                     });
                   }}>Editar</Button>
                   <Button variant="secondary" onClick={() => deactivateBusiness(item.id)} disabled={item.active === false}>Desactivar</Button>
-                  <Button variant="danger" onClick={() => deleteBusiness(item.id)}>Eliminar</Button>
+                  <Button variant="danger" onClick={() => setDeletingBusiness(item)}>Eliminar</Button>
                 </div>
               </div>
             ))}
+            {!state.businesses.length ? (
+              <div className="surface rounded-lg p-8 text-center">
+                <h3 className="font-semibold text-ink">Aun no hay negocios creados</h3>
+                <p className="mt-2 text-sm text-muted">Crea el primer negocio para empezar a registrar operacion real.</p>
+              </div>
+            ) : null}
           </div>
         </Section>
         <Section title={editingBusiness ? "Editar negocio" : "Crear negocio"}>
@@ -1000,7 +1012,8 @@ function SuperAdminPanel() {
         <Section title="Crear usuario">
           <form className="surface grid gap-4 rounded-lg p-4" onSubmit={submitUser}>
             <Field label="Negocio">
-              <select className={inputClass} value={userForm.businessId} onChange={(event) => setUserForm({ ...userForm, businessId: event.target.value })}>
+              <select className={inputClass} value={userForm.businessId} onChange={(event) => setUserForm({ ...userForm, businessId: event.target.value })} disabled={userForm.role === "super_admin"}>
+                <option value="">Seleccionar negocio</option>
                 {state.businesses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </Field>
@@ -1008,20 +1021,94 @@ function SuperAdminPanel() {
             <Field label="Email"><input className={inputClass} type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} required /></Field>
             <Field label="Contrasena"><input className={inputClass} type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="temporal123 si queda vacio" /></Field>
             <Field label="Rol">
-              <select className={inputClass} value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value as Role })}>
+              <select
+                className={inputClass}
+                value={userForm.role}
+                onChange={(event) => {
+                  const role = event.target.value as Role;
+                  setUserForm({ ...userForm, role, businessId: role === "super_admin" ? "" : userForm.businessId });
+                }}
+              >
                 <option value="admin">Admin del Negocio</option>
                 <option value="accountant">Contabilidad</option>
-                <option value="super_admin">Super Admin</option>
+                <option value="super_admin">Super Admin global</option>
               </select>
             </Field>
             <Button type="submit">Crear usuario</Button>
           </form>
         </Section>
       </div>
+      <DeleteBusinessModal
+        business={deletingBusiness}
+        onClose={() => setDeletingBusiness(null)}
+        onConfirm={async () => {
+          if (deletingBusiness) await deleteBusiness(deletingBusiness.id);
+          setDeletingBusiness(null);
+        }}
+      />
       <Section title="Auditoria general">
         <AuditTable logs={state.auditLogs} users={state.users} businesses={state.businesses} />
       </Section>
     </div>
+  );
+}
+
+function DeleteBusinessModal({
+  business,
+  onClose,
+  onConfirm,
+}: {
+  business: Business | null;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [confirmation, setConfirmation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const matches = Boolean(business && confirmation === business.name);
+
+  return (
+    <Modal title="Eliminar negocio" open={Boolean(business)} onClose={onClose}>
+      {business ? (
+        <div className="grid gap-4">
+          <div className="rounded-lg border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+            Esta accion eliminara permanentemente ventas, gastos, cierres mensuales, usuarios asociados,
+            metodos de pago, categorias, configuracion, auditoria del negocio y el negocio.
+          </div>
+          <div className="grid gap-2 text-sm text-muted">
+            <p>Para confirmar, escribe exactamente:</p>
+            <p className="rounded-md bg-panel px-3 py-2 font-semibold text-ink">{business.name}</p>
+          </div>
+          <Field label="Nombre del negocio">
+            <input
+              className={inputClass}
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              placeholder={business.name}
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => {
+              setConfirmation("");
+              onClose();
+            }}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!matches || submitting}
+              onClick={async () => {
+                setSubmitting(true);
+                await onConfirm();
+                setSubmitting(false);
+                setConfirmation("");
+              }}
+            >
+              Eliminar permanentemente
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 
@@ -1138,13 +1225,20 @@ function UsersTable({
                 <p className="font-medium text-ink">{user.name}</p>
                 <p className="text-xs text-muted">{user.email}</p>
               </td>
-              <td className="px-4 py-3 text-muted">{businessById.get(user.businessId)}</td>
+              <td className="px-4 py-3 text-muted">{user.businessId ? businessById.get(user.businessId) : "Global"}</td>
               <td className="px-4 py-3">
                 {allowRoleChange ? (
                   <select
                     className={inputClass}
                     value={user.role}
-                    onChange={(event) => onUpdate({ ...user, role: event.target.value as Role })}
+                    onChange={(event) => {
+                      const role = event.target.value as Role;
+                      if (role !== "super_admin" && !user.businessId) {
+                        toast.error("Asigna un negocio antes de cambiar este usuario a rol de negocio.");
+                        return;
+                      }
+                      onUpdate({ ...user, role, businessId: role === "super_admin" ? undefined : user.businessId });
+                    }}
                   >
                     <option value="super_admin">Super Admin</option>
                     <option value="admin">Admin del Negocio</option>
@@ -1203,7 +1297,7 @@ function AuditTable({
           {logs.map((log) => (
             <tr key={log.id} className="border-t border-line">
               <td className="whitespace-nowrap px-4 py-3 text-muted">{formatDateTime(log.createdAt)}</td>
-              <td className="px-4 py-3 text-muted">{businessById.get(log.businessId) ?? "General"}</td>
+              <td className="px-4 py-3 text-muted">{log.businessId ? businessById.get(log.businessId) : "General"}</td>
               <td className="px-4 py-3 text-muted">{userById.get(log.actorId)}</td>
               <td className="px-4 py-3 text-ink">{log.action}</td>
               <td className="px-4 py-3 text-muted">{log.entity}</td>

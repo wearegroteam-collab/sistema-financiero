@@ -2,21 +2,12 @@ import { expenseCategories, paymentMethods } from "./constants";
 import type { AppState } from "./types";
 
 export const initialState: AppState = {
-  currentBusinessId: "business-hangar",
+  currentBusinessId: "",
   activeUserId: "user-super-admin",
-  businesses: [
-    {
-      id: "business-hangar",
-      name: "Hangar",
-      currency: "COP",
-      timezone: "America/Bogota",
-      active: true,
-    },
-  ],
+  businesses: [],
   users: [
     {
       id: "user-super-admin",
-      businessId: "business-hangar",
       name: "Super Admin",
       email: "admin@hangar.local",
       role: "super_admin",

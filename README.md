@@ -32,6 +32,7 @@ Luego abre `http://localhost:3000`.
    - `SUPABASE_SERVICE_ROLE_KEY` solo en servidor, necesaria para crear usuarios Auth desde el panel.
 3. Ejecuta la migracion `supabase/migrations/0001_initial_schema.sql`.
 4. Abre la app. Si no existe ningun Super Admin, aparecera la pantalla de configuracion inicial.
+5. El setup inicial crea solo el Super Admin global. Los negocios se crean despues desde el panel Super Admin.
 
 La app usa Supabase como fuente principal cuando existen las variables `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Si no existen, cae al estado local limpio solo como respaldo temporal de desarrollo.
 
@@ -39,7 +40,7 @@ Para el primer Super Admin, desactiva confirmacion obligatoria de email en Supab
 
 ## Roles operativos
 
-- Super Admin: gestiona todos los negocios, usuarios, roles, auditoria y reapertura de meses.
+- Super Admin: usuario global sin negocio asociado; gestiona todos los negocios, usuarios, roles, auditoria y reapertura de meses.
 - Admin del Negocio: opera solo su negocio, crea ventas/gastos, cierra mes y crea usuarios de Contabilidad.
 - Contabilidad: acceso de lectura, informes, historial, cierres, PDF, Excel e impresion.
 

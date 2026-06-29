@@ -8,7 +8,7 @@ export type ExpenseCategoryKey = "payroll" | "inventory" | "extras" | "fixed";
 
 export type User = {
   id: string;
-  businessId: string;
+  businessId?: string;
   name: string;
   email: string;
   role: Role;
@@ -93,7 +93,7 @@ export type MonthlyClosure = {
 
 export type AuditLog = {
   id: string;
-  businessId: string;
+  businessId?: string;
   entity: "daily_sales" | "expenses" | "monthly_closures" | "settings" | "businesses" | "users" | "exports";
   entityId: string;
   action: "create" | "update" | "delete" | "close_month" | "reopen_month" | "download_pdf" | "export_excel" | "print";

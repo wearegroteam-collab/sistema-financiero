@@ -48,9 +48,6 @@ type StoreContextValue = {
     name: string;
     email: string;
     password: string;
-    businessName: string;
-    timezone: string;
-    currency: Business["currency"];
   }) => Promise<boolean>;
   switchBusiness: (businessId: string) => Promise<void> | void;
   switchUser: (userId: string) => void;
@@ -88,6 +85,14 @@ const emptyState: AppState = {
   auditLogs: [],
 };
 
+const fallbackBusiness: Business = {
+  id: "",
+  name: "Sin negocio",
+  currency: "COP",
+  timezone: "America/Bogota",
+  active: true,
+};
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const useSupabase = hasSupabaseConfig();
   const supabase = useMemo(() => (useSupabase ? createClient() : null), [useSupabase]);
@@ -96,7 +101,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(useSupabase);
   const [setupRequired, setSetupRequired] = useState(false);
 
-  const business = state.businesses.find((item) => item.id === state.currentBusinessId) ?? state.businesses[0] ?? initialState.businesses[0];
+  const business = state.businesses.find((item) => item.id === state.currentBusinessId) ?? state.businesses[0] ?? fallbackBusiness;
   const activeUser = state.users.find((user) => user.id === state.activeUserId) ?? state.users[0] ?? initialState.users[0];
   const canWrite = activeUser.active !== false && ["super_admin", "admin"].includes(activeUser.role);
   const canManageBusiness = activeUser.active !== false && activeUser.role === "super_admin";
@@ -164,7 +169,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const businesses = (businessesResult.data ?? []).map(mapBusiness);
     const currentBusinessId = state.currentBusinessId && businesses.some((item) => item.id === state.currentBusinessId)
       ? state.currentBusinessId
-      : user.businessId || businesses[0]?.id || "";
+      : user.role === "super_admin"
+        ? businesses[0]?.id || ""
+        : user.businessId || "";
 
     setState({
       currentBusinessId,
@@ -203,7 +210,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     auditLogs: [
       {
         id: crypto.randomUUID(),
-        businessId: business.id,
+        businessId: business.id || undefined,
         entity,
         entityId,
         action,
@@ -217,10 +224,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ],
   }), [activeUser.id, business.id]);
 
-  async function insertAudit(entity: AuditLog["entity"], entityId: string, action: AuditLog["action"], summary: string, oldData?: unknown, newData?: unknown, businessId = business.id) {
+  async function insertAudit(entity: AuditLog["entity"], entityId: string, action: AuditLog["action"], summary: string, oldData?: unknown, newData?: unknown, businessId?: string) {
     if (!supabase || !session) return;
     await supabase.from("audit_logs").insert({
-      business_id: businessId,
+      business_id: businessId || null,
       entity,
       entity_id: entityId,
       action,
@@ -309,12 +316,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         toast.error("No se puede entrar con un usuario inactivo.");
         return;
       }
-      const nextBusinessId = target.role === "super_admin" ? state.currentBusinessId : target.businessId;
+      const nextBusinessId = target.role === "super_admin" ? state.currentBusinessId : target.businessId || "";
       commitLocal({ ...state, activeUserId: userId, currentBusinessId: nextBusinessId });
     },
     addSale: async (sale) => {
       if (!canWrite) {
         toast.error("Tu rol no permite crear ventas.");
+        return false;
+      }
+      if (!business.id) {
+        toast.error("Crea o selecciona un negocio antes de registrar ventas.");
         return false;
       }
       const expected = Object.values(sale.distribution).reduce((total, value) => total + value, 0);
@@ -356,6 +367,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addExpense: async (expense) => {
       if (!canWrite) {
         toast.error("Tu rol no permite crear gastos.");
+        return false;
+      }
+      if (!business.id) {
+        toast.error("Crea o selecciona un negocio antes de registrar gastos.");
         return false;
       }
       if (isMonthClosed(state, business.id, getMonthKeyFromDate(expense.date))) {
@@ -502,6 +517,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     closeMonth: async (monthKey, notes) => {
       if (!canWrite) {
         toast.error("Tu rol no permite cerrar meses.");
+        return;
+      }
+      if (!business.id) {
+        toast.error("Crea o selecciona un negocio antes de cerrar mes.");
         return;
       }
       if (isMonthClosed(state, business.id, monthKey)) {
@@ -700,18 +719,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     deleteBusiness: async (businessId) => {
       if (!canManageBusiness) return;
-      const previous = state.businesses.find((item) => item.id === businessId);
       if (supabase) {
-        const { data, error } = await supabase.from("businesses").update({ active: false }).eq("id", businessId).select("*").single();
-        if (error || !data) {
-          toast.error(error?.message ?? "No se pudo eliminar el negocio");
+        const token = session?.access_token;
+        if (!token) {
+          toast.error("Sesion no valida.");
           return;
         }
-        await insertAudit("businesses", businessId, "delete", "Negocio eliminado/desactivado", previous, data, businessId);
+        const response = await fetch(`/api/admin/businesses/${businessId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          toast.error(payload.error ?? "No se pudo eliminar el negocio");
+          return;
+        }
         await refresh();
         toast.success("Negocio eliminado");
         return;
       }
+      const previous = state.businesses.find((item) => item.id === businessId);
       const businesses = state.businesses.map((item) => (item.id === businessId ? { ...item, active: false } : item));
       commitLocal(auditLocal({ ...state, businesses }, "businesses", businessId, "delete", "Negocio eliminado/desactivado", previous));
       toast.success("Negocio eliminado");
@@ -761,6 +788,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           name: updatedUser.name,
           role: updatedUser.role,
           active: updatedUser.active,
+          business_id: updatedUser.role === "super_admin" ? null : updatedUser.businessId,
         }).eq("id", updatedUser.id);
         if (error) {
           toast.error(error.message);
@@ -872,7 +900,7 @@ function mapBusiness(row: Record<string, any>): Business {
 function mapUser(row: Record<string, any>): User {
   return {
     id: row.id,
-    businessId: row.business_id,
+    businessId: row.business_id ?? undefined,
     name: row.name,
     email: row.email,
     role: row.role,
@@ -1029,9 +1057,6 @@ function SetupScreen({ onSubmit }: { onSubmit: StoreContextValue["createInitialS
     name: "",
     email: "",
     password: "",
-    businessName: "Hangar",
-    timezone: "America/Bogota",
-    currency: "COP" as Business["currency"],
   });
   const [submitting, setSubmitting] = useState(false);
   return (
@@ -1044,15 +1069,12 @@ function SetupScreen({ onSubmit }: { onSubmit: StoreContextValue["createInitialS
       }}>
         <div>
           <h1 className="text-xl font-semibold text-ink">Configuracion inicial</h1>
-          <p className="mt-2 text-sm text-muted">Crea el primer Super Admin real y el negocio base.</p>
+          <p className="mt-2 text-sm text-muted">Crea el primer Super Admin global. Despues podras crear negocios desde el panel.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="grid gap-1.5 text-sm font-medium text-ink">Nombre<input className="focus-ring h-10 rounded-md border border-line px-3" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label>
           <label className="grid gap-1.5 text-sm font-medium text-ink">Email<input className="focus-ring h-10 rounded-md border border-line px-3" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label>
           <label className="grid gap-1.5 text-sm font-medium text-ink">Contrasena<input className="focus-ring h-10 rounded-md border border-line px-3" type="password" minLength={8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
-          <label className="grid gap-1.5 text-sm font-medium text-ink">Negocio<input className="focus-ring h-10 rounded-md border border-line px-3" value={form.businessName} onChange={(event) => setForm({ ...form, businessName: event.target.value })} required /></label>
-          <label className="grid gap-1.5 text-sm font-medium text-ink">Moneda<select className="focus-ring h-10 rounded-md border border-line px-3" value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value as Business["currency"] })}><option value="COP">COP</option><option value="USD">USD</option></select></label>
-          <label className="grid gap-1.5 text-sm font-medium text-ink">Zona horaria<input className="focus-ring h-10 rounded-md border border-line px-3" value={form.timezone} onChange={(event) => setForm({ ...form, timezone: event.target.value })} required /></label>
         </div>
         <button className="focus-ring h-10 rounded-md bg-ink px-4 text-sm font-medium text-white" disabled={submitting}>
           {submitting ? "Creando..." : "Crear Super Admin"}

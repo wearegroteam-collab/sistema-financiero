@@ -20,12 +20,16 @@ create table public.businesses (
 
 create table public.users (
   id uuid primary key references auth.users(id) on delete cascade,
-  business_id uuid not null references public.businesses(id) on delete cascade,
+  business_id uuid references public.businesses(id) on delete cascade,
   name text not null,
   email text not null unique,
   role public.user_role not null default 'admin',
   active boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint business_required_for_business_roles check (
+    (role = 'super_admin' and business_id is null)
+    or (role in ('admin', 'accountant') and business_id is not null)
+  )
 );
 
 create table public.payment_methods (
@@ -123,7 +127,7 @@ create table public.settings (
 
 create table public.audit_logs (
   id uuid primary key default gen_random_uuid(),
-  business_id uuid not null references public.businesses(id) on delete cascade,
+  business_id uuid references public.businesses(id) on delete cascade,
   entity text not null,
   entity_id uuid not null,
   action public.audit_action not null,
@@ -248,9 +252,6 @@ with check (public.current_role() = 'super_admin');
 create policy "Admins can update own business" on public.businesses
 for update using (id = public.current_business_id() and public.current_role() = 'admin');
 
-create policy "First setup can create first business" on public.businesses
-for insert with check (public.has_super_admin() = false);
-
 create policy "Super admins can read all users" on public.users
 for select using (public.current_role() = 'super_admin');
 
@@ -273,13 +274,6 @@ with check (
   and role = 'accountant'
 );
 
-create policy "First setup can create first super admin profile" on public.users
-for insert with check (
-  public.has_super_admin() = false
-  and id = auth.uid()
-  and role = 'super_admin'
-);
-
 create policy "Read payment methods" on public.payment_methods
 for select using (business_id = public.current_business_id());
 
@@ -293,9 +287,6 @@ create policy "Super admins manage all payment methods" on public.payment_method
 for all using (public.current_role() = 'super_admin')
 with check (public.current_role() = 'super_admin');
 
-create policy "First setup can create payment methods" on public.payment_methods
-for insert with check (public.has_super_admin() = false);
-
 create policy "Read categories" on public.categories
 for select using (business_id = public.current_business_id());
 
@@ -308,9 +299,6 @@ for all using (business_id = public.current_business_id() and public.current_rol
 create policy "Super admins manage all categories" on public.categories
 for all using (public.current_role() = 'super_admin')
 with check (public.current_role() = 'super_admin');
-
-create policy "First setup can create categories" on public.categories
-for insert with check (public.has_super_admin() = false);
 
 create policy "Read daily sales" on public.daily_sales
 for select using (business_id = public.current_business_id());
