@@ -51,6 +51,8 @@ export function AppShell() {
   const closed = isMonthClosed(state, business.id, activeMonth);
   const movements = buildMovements(state, business.id, activeMonth);
   const hasActiveBusiness = Boolean(business.id);
+  const superAdminManagingBusiness = activeUser.role === "super_admin" && hasActiveBusiness;
+  const globalSuperAdmin = activeUser.role === "super_admin" && !hasActiveBusiness;
 
   const nav = [
     { key: "dashboard", label: "Dashboard", icon: BarChart3 },
@@ -70,7 +72,7 @@ export function AppShell() {
               <Building2 size={20} />
             </div>
             <div>
-              <p className="text-sm text-muted">Restaurante</p>
+              <p className="text-sm text-muted">{globalSuperAdmin ? "Panel global" : "Restaurante"}</p>
               <h1 className="text-lg font-semibold text-ink">{business.name}</h1>
             </div>
           </div>
@@ -95,19 +97,6 @@ export function AppShell() {
               </Field>
             )}
           </div>
-          {activeUser.role === "super_admin" ? (
-            <div className="mt-4 hidden lg:block">
-              <Field label="Negocio activo">
-                <select className={inputClass} value={business.id} onChange={(event) => store.switchBusiness(event.target.value)}>
-                  {state.businesses.map((item) => (
-                    <option key={item.id} value={item.id} disabled={item.active === false}>
-                      {item.name}{item.active === false ? " (inactivo)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          ) : null}
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 pb-4 lg:grid lg:overflow-visible">
           {nav.map((item) => {
@@ -130,9 +119,22 @@ export function AppShell() {
       </aside>
       <main className="px-4 py-5 md:px-8 lg:px-10">
         <div className="mx-auto grid max-w-7xl gap-7">
+          {superAdminManagingBusiness ? (
+            <div className="rounded-lg border border-info/30 bg-info/10 px-4 py-3 text-sm text-ink">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>Estas administrando {business.name} como Super Admin</span>
+                <Button variant="secondary" onClick={() => {
+                  store.switchBusiness("");
+                  setView("super_admin");
+                }}>
+                  Volver al panel global
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <header className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-medium capitalize text-muted">{monthName(activeMonth)}</p>
+              <p className="text-sm font-medium capitalize text-muted">{globalSuperAdmin ? "Administracion global" : monthName(activeMonth)}</p>
               <h2 className="text-2xl font-semibold tracking-normal text-ink">
                 {view === "dashboard" ? "Finanzas del mes activo" : nav.find((item) => item.key === view)?.label}
               </h2>
@@ -910,7 +912,9 @@ function SuperAdminPanel() {
           adminEmail: businessForm.adminEmail,
           phone: businessForm.phone,
         },
-        businessForm.adminEmail ? { name: businessForm.adminName, email: businessForm.adminEmail } : undefined,
+        businessForm.adminName && businessForm.adminEmail
+          ? { name: businessForm.adminName, email: businessForm.adminEmail, password: "temporal123" }
+          : undefined,
       );
     }
     setBusinessForm({ name: "", logoUrl: "", currency: "COP", timezone: "America/Bogota", adminName: "", adminEmail: "", phone: "" });
@@ -1002,7 +1006,7 @@ function SuperAdminPanel() {
       <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
         <Section title="Usuarios por negocio">
           <UsersTable
-            users={state.users}
+            users={state.users.filter((user) => user.role !== "super_admin")}
             businesses={state.businesses}
             onUpdate={updateUser}
             onDeactivate={deactivateUser}

@@ -167,11 +167,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ]);
 
     const businesses = (businessesResult.data ?? []).map(mapBusiness);
-    const currentBusinessId = state.currentBusinessId && businesses.some((item) => item.id === state.currentBusinessId)
-      ? state.currentBusinessId
-      : user.role === "super_admin"
-        ? businesses[0]?.id || ""
-        : user.businessId || "";
+    const currentBusinessId = user.role === "super_admin"
+      ? (state.currentBusinessId && businesses.some((item) => item.id === state.currentBusinessId) ? state.currentBusinessId : "")
+      : user.businessId || "";
 
     setState({
       currentBusinessId,
@@ -302,6 +300,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     switchBusiness: async (businessId) => {
       if (activeUser.role !== "super_admin") return;
+      if (!businessId) {
+        setState({ ...state, currentBusinessId: "" });
+        return;
+      }
       const target = state.businesses.find((item) => item.id === businessId && item.active !== false);
       if (!target) {
         toast.error("No se puede entrar a un negocio inactivo.");
@@ -636,7 +638,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       commitLocal(auditLocal(next, "settings", updatedBusiness.id, "update", "Configuracion actualizada", business, updatedBusiness));
       toast.success("Configuracion guardada");
     },
-    createBusiness: async (newBusiness) => {
+    createBusiness: async (newBusiness, admin) => {
       if (!canManageBusiness) {
         toast.error("Solo Super Admin puede crear negocios.");
         return;
@@ -661,12 +663,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           supabase.from("categories").insert(expenseCategories.map((category) => ({ business_id: data.id, key: category.key, label: category.label, color: category.color }))),
         ]);
         await insertAudit("businesses", data.id, "create", "Negocio creado", undefined, data, data.id);
+        if (admin?.email && admin.name && session?.access_token) {
+          const response = await fetch("/api/admin/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              businessId: data.id,
+              name: admin.name,
+              email: admin.email,
+              password: admin.password || "temporal123",
+              role: "admin",
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            toast.error(payload.error ?? "Negocio creado, pero no se pudo crear el administrador.");
+          }
+        }
         await refresh();
         toast.success("Negocio creado");
         return;
       }
       const record: Business = { ...newBusiness, id: crypto.randomUUID(), active: newBusiness.active ?? true };
-      commitLocal(auditLocal({ ...state, businesses: [record, ...state.businesses], currentBusinessId: record.id }, "businesses", record.id, "create", "Negocio creado", undefined, record));
+      const adminUser: User | null = admin?.email && admin.name
+        ? {
+            id: crypto.randomUUID(),
+            businessId: record.id,
+            name: admin.name,
+            email: admin.email,
+            password: admin.password || "temporal123",
+            role: "admin",
+            active: true,
+          }
+        : null;
+      commitLocal(auditLocal({
+        ...state,
+        businesses: [record, ...state.businesses],
+        users: adminUser ? [adminUser, ...state.users] : state.users,
+        currentBusinessId: record.id,
+      }, "businesses", record.id, "create", "Negocio creado", undefined, { record, adminUser }));
       toast.success("Negocio creado");
     },
     updateBusiness: async (updatedBusiness) => {
