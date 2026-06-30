@@ -44,6 +44,16 @@ type StoreContextValue = {
   canReopenMonths: boolean;
   signIn: (email: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
+  sendPasswordRecovery: (email: string) => Promise<boolean>;
+  changePassword: (input: {
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+  }) => Promise<boolean>;
+  completePasswordRecovery: (input: {
+    newPassword: string;
+    confirmPassword: string;
+  }) => Promise<boolean>;
   createInitialSuperAdmin: (input: {
     name: string;
     email: string;
@@ -100,6 +110,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(useSupabase);
   const [setupRequired, setSetupRequired] = useState(false);
+  const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
 
   const business = state.currentBusinessId
     ? state.businesses.find((item) => item.id === state.currentBusinessId) ?? fallbackBusiness
@@ -190,8 +201,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!supabase) return;
+    if (typeof window !== "undefined") {
+      const recoveryUrl = `${window.location.search}${window.location.hash}`;
+      if (recoveryUrl.includes("type=recovery")) {
+        setPasswordRecoveryActive(true);
+      }
+    }
     void refresh();
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setPasswordRecoveryActive(true);
+      }
       setSession(nextSession);
       void refresh();
     });
@@ -266,7 +286,73 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
       setState(emptyState);
       setSession(null);
+      setPasswordRecoveryActive(false);
+      clearTemporaryCache();
       toast.success("Sesion cerrada");
+    },
+    sendPasswordRecovery: async (email) => {
+      if (!supabase) return false;
+      const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+      if (error) {
+        toast.error(error.message);
+        return false;
+      }
+      toast.success("Si el correo existe recibiras un enlace para cambiar tu contrasena.");
+      return true;
+    },
+    changePassword: async ({ currentPassword, newPassword, confirmPassword }) => {
+      if (!supabase || !session) return false;
+      if (newPassword.length < 8) {
+        toast.error("La nueva contrasena debe tener minimo 8 caracteres.");
+        return false;
+      }
+      if (newPassword !== confirmPassword) {
+        toast.error("La confirmacion no coincide.");
+        return false;
+      }
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: activeUser.email,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        toast.error("La contrasena actual no es correcta.");
+        return false;
+      }
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        toast.error(error.message);
+        return false;
+      }
+      toast.success("Contrasena actualizada correctamente.");
+      await refresh();
+      return true;
+    },
+    completePasswordRecovery: async ({ newPassword, confirmPassword }) => {
+      if (!supabase) return false;
+      if (newPassword.length < 8) {
+        toast.error("La nueva contrasena debe tener minimo 8 caracteres.");
+        return false;
+      }
+      if (newPassword !== confirmPassword) {
+        toast.error("La confirmacion no coincide.");
+        return false;
+      }
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        toast.error(error.message);
+        return false;
+      }
+      await supabase.auth.signOut();
+      setState(emptyState);
+      setSession(null);
+      setPasswordRecoveryActive(false);
+      clearTemporaryCache();
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+      toast.success("Contrasena actualizada. Inicia sesion nuevamente.");
+      return true;
     },
     createInitialSuperAdmin: async (input) => {
       if (!supabase) return false;
@@ -855,7 +941,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   if (useSupabase && loading) return <AuthFrame title="Conectando con Supabase" subtitle="Validando sesion y permisos..." />;
   if (useSupabase && setupRequired) return <SetupScreen onSubmit={value.createInitialSuperAdmin} />;
-  if (useSupabase && !session) return <LoginScreen onSubmit={value.signIn} />;
+  if (useSupabase && passwordRecoveryActive && session) return <ResetPasswordScreen onSubmit={value.completePasswordRecovery} />;
+  if (useSupabase && !session) return <LoginScreen onSubmit={value.signIn} onRecover={value.sendPasswordRecovery} />;
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
@@ -872,6 +959,16 @@ function readLocalState() {
   LEGACY_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
   const saved = window.localStorage.getItem(STORAGE_KEY);
   return saved ? (JSON.parse(saved) as AppState) : initialState;
+}
+
+function clearTemporaryCache() {
+  if (typeof window === "undefined") return;
+  Object.keys(window.localStorage)
+    .filter((key) => key.startsWith("hangar-finanzas-") || key.startsWith("sb-"))
+    .forEach((key) => window.localStorage.removeItem(key));
+  Object.keys(window.sessionStorage)
+    .filter((key) => key.startsWith("hangar-finanzas-") || key.startsWith("sb-"))
+    .forEach((key) => window.sessionStorage.removeItem(key));
 }
 
 function scopedSelect<T>(query: T, businessId?: string): T {
@@ -926,6 +1023,7 @@ function mapUser(row: Record<string, any>): User {
     email: row.email,
     role: row.role,
     active: row.active,
+    createdAt: row.created_at ?? undefined,
   };
 }
 
@@ -1041,32 +1139,103 @@ function AuthFrame({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-function LoginScreen({ onSubmit }: { onSubmit: (email: string, password: string) => Promise<boolean> }) {
+function LoginScreen({
+  onSubmit,
+  onRecover,
+}: {
+  onSubmit: (email: string, password: string) => Promise<boolean>;
+  onRecover: (email: string) => Promise<boolean>;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
   return (
     <div className="grid min-h-screen place-items-center bg-panel p-4">
       <form className="surface grid w-full max-w-md gap-4 rounded-lg p-6" onSubmit={async (event) => {
         event.preventDefault();
+        if (recoveryMode) {
+          setRecovering(true);
+          await onRecover(email);
+          setRecovering(false);
+          return;
+        }
         setSubmitting(true);
         await onSubmit(email, password);
         setSubmitting(false);
       }}>
         <div>
-          <h1 className="text-xl font-semibold text-ink">Ingresar</h1>
-          <p className="mt-2 text-sm text-muted">Usa tu email y contrasena de Supabase Auth.</p>
+          <h1 className="text-xl font-semibold text-ink">{recoveryMode ? "Recuperar contrasena" : "Ingresar"}</h1>
+          <p className="mt-2 text-sm text-muted">
+            {recoveryMode ? "Ingresa tu email para recibir el enlace de recuperacion." : "Usa tu email y contrasena de Supabase Auth."}
+          </p>
         </div>
         <label className="grid gap-1.5 text-sm font-medium text-ink">
           Email
           <input className="focus-ring h-10 rounded-md border border-line px-3" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
         </label>
+        {!recoveryMode ? (
+          <label className="grid gap-1.5 text-sm font-medium text-ink">
+            Contrasena
+            <input className="focus-ring h-10 rounded-md border border-line px-3" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+          </label>
+        ) : null}
+        <button className="focus-ring h-10 rounded-md bg-ink px-4 text-sm font-medium text-white" disabled={submitting}>
+          {recoveryMode ? (recovering ? "Enviando..." : "Enviar enlace") : (submitting ? "Ingresando..." : "Iniciar sesion")}
+        </button>
+        <button
+          type="button"
+          className="focus-ring h-10 rounded-md text-sm font-medium text-ink hover:bg-panel"
+          onClick={() => setRecoveryMode(!recoveryMode)}
+        >
+          {recoveryMode ? "Volver al login" : "Olvidaste tu contrasena?"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ResetPasswordScreen({ onSubmit }: { onSubmit: StoreContextValue["completePasswordRecovery"] }) {
+  const [form, setForm] = useState({ newPassword: "", confirmPassword: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-panel p-4">
+      <form className="surface grid w-full max-w-md gap-4 rounded-lg p-6" onSubmit={async (event) => {
+        event.preventDefault();
+        setSubmitting(true);
+        await onSubmit(form);
+        setSubmitting(false);
+      }}>
+        <div>
+          <h1 className="text-xl font-semibold text-ink">Definir nueva contrasena</h1>
+          <p className="mt-2 text-sm text-muted">Crea una contrasena segura para volver a iniciar sesion.</p>
+        </div>
         <label className="grid gap-1.5 text-sm font-medium text-ink">
-          Contrasena
-          <input className="focus-ring h-10 rounded-md border border-line px-3" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+          Nueva contrasena
+          <input
+            className="focus-ring h-10 rounded-md border border-line px-3"
+            type="password"
+            minLength={8}
+            value={form.newPassword}
+            onChange={(event) => setForm({ ...form, newPassword: event.target.value })}
+            required
+          />
+        </label>
+        <label className="grid gap-1.5 text-sm font-medium text-ink">
+          Confirmar nueva contrasena
+          <input
+            className="focus-ring h-10 rounded-md border border-line px-3"
+            type="password"
+            minLength={8}
+            value={form.confirmPassword}
+            onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })}
+            required
+          />
         </label>
         <button className="focus-ring h-10 rounded-md bg-ink px-4 text-sm font-medium text-white" disabled={submitting}>
-          {submitting ? "Ingresando..." : "Iniciar sesion"}
+          {submitting ? "Actualizando..." : "Actualizar contrasena"}
         </button>
       </form>
     </div>

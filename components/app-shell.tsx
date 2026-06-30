@@ -7,12 +7,15 @@ import {
   BarChart3,
   Building2,
   CalendarCheck,
+  ChevronDown,
   Download,
   Eye,
   FileText,
   FileDown,
   History,
+  KeyRound,
   Lock,
+  LogOut,
   Pencil,
   Plus,
   Printer,
@@ -21,6 +24,7 @@ import {
   Settings,
   Trash2,
   Unlock,
+  UserCircle,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -46,6 +50,7 @@ export function AppShell() {
   const [editingMovement, setEditingMovement] = useState<ReturnType<typeof buildMovements>[number] | null>(null);
   const [deletingMovement, setDeletingMovement] = useState<ReturnType<typeof buildMovements>[number] | null>(null);
   const [viewingClosure, setViewingClosure] = useState<MonthlyClosure | null>(null);
+  const [accountPanel, setAccountPanel] = useState<"profile" | "password" | null>(null);
   const activeMonth = monthKey();
   const summary = calculateMonth(state, business.id, activeMonth);
   const closed = isMonthClosed(state, business.id, activeMonth);
@@ -84,9 +89,6 @@ export function AppShell() {
               <div className="rounded-md border border-line px-3 py-2 text-xs text-muted">
                 {activeUser.name}
                 <span className="mt-1 block font-medium text-ink">{roleLabels[activeUser.role]}</span>
-                <Button className="mt-3 w-full" variant="secondary" onClick={() => void store.signOut()}>
-                  Cerrar sesion
-                </Button>
               </div>
             ) : (
               <Field label="Usuario activo">
@@ -142,18 +144,28 @@ export function AppShell() {
                 {activeView === "dashboard" ? "Finanzas del mes activo" : nav.find((item) => item.key === activeView)?.label}
               </h2>
             </div>
-            {!globalSuperAdmin ? (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => setExpenseOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
-                <ReceiptText size={16} />
-                Gasto
-              </Button>
-              <Button onClick={() => setSaleOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
-                <Plus size={16} />
-                Venta
-              </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {!globalSuperAdmin ? (
+                <>
+                  <Button variant="secondary" onClick={() => setExpenseOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
+                    <ReceiptText size={16} />
+                    Gasto
+                  </Button>
+                  <Button onClick={() => setSaleOpen(true)} disabled={closed || !canWrite || !hasActiveBusiness}>
+                    <Plus size={16} />
+                    Venta
+                  </Button>
+                </>
+              ) : null}
+              {useSupabase ? (
+                <UserMenu
+                  user={activeUser}
+                  onProfile={() => setAccountPanel("profile")}
+                  onPassword={() => setAccountPanel("password")}
+                  onSignOut={store.signOut}
+                />
+              ) : null}
             </div>
-            ) : null}
           </header>
 
           {activeView === "dashboard" ? (
@@ -231,6 +243,129 @@ export function AppShell() {
           </div>
         ) : null}
       </Modal>
+      <Modal title="Mi perfil" open={Boolean(accountPanel)} onClose={() => setAccountPanel(null)}>
+        <ProfilePanel initialMode={accountPanel ?? "profile"} onDone={() => setAccountPanel(null)} />
+      </Modal>
+    </div>
+  );
+}
+
+function UserMenu({
+  user,
+  onProfile,
+  onPassword,
+  onSignOut,
+}: {
+  user: User;
+  onProfile: () => void;
+  onPassword: () => void;
+  onSignOut: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  return (
+    <div className="relative">
+      <Button variant="secondary" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <UserCircle size={16} />
+        {user.name}
+        <ChevronDown size={15} />
+      </Button>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-2 w-72 rounded-lg border border-line bg-white p-2 shadow-lg">
+          <div className="border-b border-line px-3 py-2">
+            <p className="font-semibold text-ink">{user.name}</p>
+            <p className="mt-1 text-sm text-muted">{user.email}</p>
+            <p className="mt-1 text-xs font-medium text-muted">{roleLabels[user.role]}</p>
+          </div>
+          <button className="focus-ring mt-2 flex h-10 w-full items-center gap-2 rounded-md px-3 text-sm text-ink hover:bg-panel" onClick={() => {
+            setOpen(false);
+            onProfile();
+          }}>
+            <UserCircle size={16} />
+            Mi perfil
+          </button>
+          <button className="focus-ring flex h-10 w-full items-center gap-2 rounded-md px-3 text-sm text-ink hover:bg-panel" onClick={() => {
+            setOpen(false);
+            onPassword();
+          }}>
+            <KeyRound size={16} />
+            Cambiar contrasena
+          </button>
+          <button
+            className="focus-ring flex h-10 w-full items-center gap-2 rounded-md px-3 text-sm text-danger hover:bg-danger/10"
+            disabled={signingOut}
+            onClick={async () => {
+              setSigningOut(true);
+              await onSignOut();
+              setSigningOut(false);
+            }}
+          >
+            <LogOut size={16} />
+            {signingOut ? "Cerrando..." : "Cerrar sesion"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfilePanel({ initialMode, onDone }: { initialMode: "profile" | "password"; onDone: () => void }) {
+  const { activeUser, changePassword } = useStore();
+  const [mode, setMode] = useState<"profile" | "password">(initialMode);
+  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <div className="grid gap-5">
+      <div className="grid gap-3 rounded-lg border border-line p-4">
+        <div className="grid gap-1">
+          <p className="text-sm text-muted">Nombre</p>
+          <p className="font-medium text-ink">{activeUser.name}</p>
+        </div>
+        <div className="grid gap-1">
+          <p className="text-sm text-muted">Email</p>
+          <p className="font-medium text-ink">{activeUser.email}</p>
+        </div>
+        <div className="grid gap-1">
+          <p className="text-sm text-muted">Rol</p>
+          <p className="font-medium text-ink">{roleLabels[activeUser.role]}</p>
+        </div>
+        <div className="grid gap-1">
+          <p className="text-sm text-muted">Fecha de creacion</p>
+          <p className="font-medium text-ink">{activeUser.createdAt ? formatDateTime(activeUser.createdAt) : "No disponible"}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant={mode === "profile" ? "primary" : "secondary"} onClick={() => setMode("profile")}>Mi perfil</Button>
+        <Button variant={mode === "password" ? "primary" : "secondary"} onClick={() => setMode("password")}>Cambiar contrasena</Button>
+      </div>
+      {mode === "password" ? (
+        <form className="grid gap-4" onSubmit={async (event) => {
+          event.preventDefault();
+          setSubmitting(true);
+          const ok = await changePassword(form);
+          setSubmitting(false);
+          if (ok) {
+            setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+            onDone();
+          }
+        }}>
+          <Field label="Contrasena actual">
+            <input className={inputClass} type="password" value={form.currentPassword} onChange={(event) => setForm({ ...form, currentPassword: event.target.value })} required />
+          </Field>
+          <Field label="Nueva contrasena" hint="Minimo 8 caracteres.">
+            <input className={inputClass} type="password" minLength={8} value={form.newPassword} onChange={(event) => setForm({ ...form, newPassword: event.target.value })} required />
+          </Field>
+          <Field label="Confirmar nueva contrasena">
+            <input className={inputClass} type="password" minLength={8} value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} required />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={onDone}>Cancelar</Button>
+            <Button type="submit" disabled={submitting}>{submitting ? "Actualizando..." : "Guardar contrasena"}</Button>
+          </div>
+        </form>
+      ) : null}
     </div>
   );
 }
@@ -881,6 +1016,8 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
   } = useStore();
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(null);
   const [deletingBusiness, setDeletingBusiness] = useState<Business | null>(null);
+  const [businessSubmitting, setBusinessSubmitting] = useState(false);
+  const [userSubmitting, setUserSubmitting] = useState(false);
   const [businessForm, setBusinessForm] = useState({
     name: "",
     logoUrl: "",
@@ -897,16 +1034,17 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
     role: "admin" as Role,
   });
 
-  function submitBusiness(event: FormEvent) {
+  async function submitBusiness(event: FormEvent) {
     event.preventDefault();
+    setBusinessSubmitting(true);
     if (editingBusiness) {
-      updateBusiness({
+      await updateBusiness({
         ...editingBusiness,
         ...businessForm,
       });
       setEditingBusiness(null);
     } else {
-      createBusiness(
+      await createBusiness(
         {
           name: businessForm.name,
           logoUrl: businessForm.logoUrl,
@@ -921,21 +1059,24 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
           : undefined,
       );
     }
+    setBusinessSubmitting(false);
     setBusinessForm({ name: "", logoUrl: "", currency: "COP", timezone: "America/Bogota", adminName: "", adminEmail: "", phone: "" });
   }
 
-  function submitUser(event: FormEvent) {
+  async function submitUser(event: FormEvent) {
     event.preventDefault();
     if (!userForm.businessId && userForm.role !== "super_admin") {
       toast.error("Selecciona un negocio para este usuario.");
       return;
     }
-    createUser({
+    setUserSubmitting(true);
+    await createUser({
       businessId: userForm.businessId,
       name: userForm.name,
       email: userForm.email,
       role: userForm.role,
     });
+    setUserSubmitting(false);
     setUserForm({ businessId: business.id, name: "", email: "", role: "admin" });
   }
 
@@ -1009,8 +1150,10 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
             <Field label="Email administrador"><input className={inputClass} type="email" value={businessForm.adminEmail} onChange={(event) => setBusinessForm({ ...businessForm, adminEmail: event.target.value })} /></Field>
             <Field label="Telefono opcional"><input className={inputClass} value={businessForm.phone} onChange={(event) => setBusinessForm({ ...businessForm, phone: event.target.value })} /></Field>
             <div className="flex gap-2">
-              <Button type="submit">{editingBusiness ? "Guardar negocio" : "Crear negocio"}</Button>
-              {editingBusiness ? <Button type="button" variant="secondary" onClick={() => setEditingBusiness(null)}>Cancelar</Button> : null}
+              <Button type="submit" disabled={businessSubmitting}>
+                {businessSubmitting ? (editingBusiness ? "Guardando..." : "Creando...") : (editingBusiness ? "Guardar negocio" : "Crear negocio")}
+              </Button>
+              {editingBusiness ? <Button type="button" variant="secondary" onClick={() => setEditingBusiness(null)} disabled={businessSubmitting}>Cancelar</Button> : null}
             </div>
           </form>
         </Section>
@@ -1049,7 +1192,7 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
               </select>
             </Field>
             <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
-            <Button type="submit">Crear usuario</Button>
+            <Button type="submit" disabled={userSubmitting}>{userSubmitting ? "Enviando invitacion..." : "Crear usuario"}</Button>
           </form>
         </Section>
       </div>
@@ -1133,6 +1276,7 @@ function SettingsView() {
   const [currency, setCurrency] = useState(business.currency);
   const [timezone, setTimezone] = useState(business.timezone);
   const [accountingUser, setAccountingUser] = useState({ name: "", email: "" });
+  const [accountingSubmitting, setAccountingSubmitting] = useState(false);
   const businessUsers = state.users.filter((user) => user.businessId === business.id);
 
   return (
@@ -1168,19 +1312,23 @@ function SettingsView() {
             {canManageUsers && activeUser.role !== "accountant" ? (
               <form className="surface grid gap-3 rounded-lg p-4" onSubmit={(event) => {
                 event.preventDefault();
-                createUser({
-                  businessId: business.id,
-                  name: accountingUser.name,
-                  email: accountingUser.email,
-                  role: "accountant",
-                });
-                setAccountingUser({ name: "", email: "" });
+                void (async () => {
+                  setAccountingSubmitting(true);
+                  await createUser({
+                    businessId: business.id,
+                    name: accountingUser.name,
+                    email: accountingUser.email,
+                    role: "accountant",
+                  });
+                  setAccountingSubmitting(false);
+                  setAccountingUser({ name: "", email: "" });
+                })();
               }}>
                 <h3 className="font-semibold text-ink">Crear usuario de Contabilidad</h3>
                 <Field label="Nombre"><input className={inputClass} value={accountingUser.name} onChange={(event) => setAccountingUser({ ...accountingUser, name: event.target.value })} required /></Field>
                 <Field label="Email"><input className={inputClass} type="email" value={accountingUser.email} onChange={(event) => setAccountingUser({ ...accountingUser, email: event.target.value })} required /></Field>
                 <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
-                <Button type="submit">Crear Contabilidad</Button>
+                <Button type="submit" disabled={accountingSubmitting}>{accountingSubmitting ? "Enviando invitacion..." : "Crear Contabilidad"}</Button>
               </form>
             ) : null}
           </div>

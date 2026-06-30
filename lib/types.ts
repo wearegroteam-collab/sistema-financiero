@@ -13,6 +13,7 @@ export type User = {
   email: string;
   role: Role;
   active: boolean;
+  createdAt?: string;
   password?: string;
 };
 
