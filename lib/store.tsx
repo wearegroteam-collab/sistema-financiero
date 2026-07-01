@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import type { ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { toast } from "sonner";
+import { getAuthCallbackUrl } from "./auth-redirect";
 import { expenseCategories, paymentMethods } from "./constants";
 import { calculateMonth, getMonthKeyFromDate, isMonthClosed } from "./finance";
 import { initialState } from "./initial-data";
@@ -292,8 +293,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     sendPasswordRecovery: async (email) => {
       if (!supabase) return false;
-      const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+      let redirectTo: string;
+      try {
+        redirectTo = getAuthCallbackUrl("recovery");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Falta NEXT_PUBLIC_APP_URL.");
+        return false;
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) {
         toast.error(error.message);
         return false;

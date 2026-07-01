@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthCallbackUrl } from "@/lib/auth-redirect";
 import { expenseCategories, paymentMethods } from "@/lib/constants";
 
 export async function POST(request: Request) {
@@ -37,6 +38,18 @@ export async function POST(request: Request) {
 
   if ((adminName && !adminEmail) || (!adminName && adminEmail)) {
     return NextResponse.json({ error: "Completa nombre y email del administrador principal." }, { status: 400 });
+  }
+
+  let adminRedirectTo: string | null = null;
+  if (adminName && adminEmail) {
+    try {
+      adminRedirectTo = getAuthCallbackUrl();
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Falta NEXT_PUBLIC_APP_URL." },
+        { status: 500 },
+      );
+    }
   }
 
   const userClient = createClient(url, anonKey, {
@@ -115,11 +128,10 @@ export async function POST(request: Request) {
 
     let adminProfile = null;
     if (adminName && adminEmail) {
-      const redirectTo = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
-      const inviteOptions = redirectTo
-        ? { data: { name: adminName }, redirectTo }
-        : { data: { name: adminName } };
-      const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(adminEmail, inviteOptions);
+      const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+        adminEmail,
+        { data: { name: adminName }, redirectTo: adminRedirectTo ?? undefined },
+      );
 
       if (inviteError || !invited.user) {
         throw new Error(inviteError?.message ?? "No se pudo invitar al administrador.");

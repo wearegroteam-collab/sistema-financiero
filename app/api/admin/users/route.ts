@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthCallbackUrl } from "@/lib/auth-redirect";
 
 export async function POST(request: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -61,7 +62,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No tienes permisos para crear este usuario." }, { status: 403 });
   }
 
-  const redirectTo = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+  let redirectTo: string;
+  try {
+    redirectTo = getAuthCallbackUrl();
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Falta NEXT_PUBLIC_APP_URL." },
+      { status: 500 },
+    );
+  }
   const { data: created, error: createError } = password
     ? await adminClient.auth.admin.createUser({
         email,
@@ -71,7 +80,7 @@ export async function POST(request: Request) {
       })
     : await adminClient.auth.admin.inviteUserByEmail(
         email,
-        redirectTo ? { data: { name }, redirectTo } : { data: { name } },
+        { data: { name }, redirectTo },
       );
 
   if (createError || !created.user) {
