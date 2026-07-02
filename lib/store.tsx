@@ -444,7 +444,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         toast.error("Crea o selecciona un negocio antes de registrar ventas.");
         return false;
       }
-      const expected = Object.values(sale.distribution).reduce((total, value) => total + value, 0);
+      const expected = Object.values(sale.distribution).reduce((total, value) => total + Number(value || 0), 0);
       if (expected !== sale.total) {
         const diff = expected - sale.total;
         toast.error(diff > 0 ? `Sobran ${diff.toLocaleString("es-CO")}` : `Faltan ${Math.abs(diff).toLocaleString("es-CO")}`);
@@ -523,7 +523,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         toast.error("Tu rol no permite editar ventas.");
         return false;
       }
-      const expected = Object.values(sale.distribution).reduce((total, value) => total + value, 0);
+      const expected = Object.values(sale.distribution).reduce((total, value) => total + Number(value || 0), 0);
       if (expected !== sale.total) {
         const diff = expected - sale.total;
         toast.error(diff > 0 ? `Sobran ${diff.toLocaleString("es-CO")}` : `Faltan ${Math.abs(diff).toLocaleString("es-CO")}`);

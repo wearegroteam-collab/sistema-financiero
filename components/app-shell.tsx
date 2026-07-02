@@ -31,7 +31,7 @@ import { toast } from "sonner";
 import { expenseCategories, paymentMethods, roleLabels } from "@/lib/constants";
 import { clearDraft, usePersistentDraft } from "@/lib/drafts";
 import { exportExcel, exportPdf } from "@/lib/export";
-import { buildMovements, calculateMonth, calculateRange, isMonthClosed, type ReportFilters } from "@/lib/finance";
+import { buildMovements, calculateMonth, calculateRange, findOldestPendingClosureMonth, isMonthClosed, type ReportFilters } from "@/lib/finance";
 import { formatCurrency, formatDate, formatDateTime, formatPercent, monthKey, monthName } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { Business, ExpenseCategoryKey, MonthlyClosure, PaymentMethodKey, Role, User } from "@/lib/types";
@@ -48,6 +48,7 @@ export function AppShell() {
   const [saleOpen, setSaleOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [closeMonthOpen, setCloseMonthOpen] = useState(false);
+  const [monthToClose, setMonthToClose] = useState<string | null>(null);
   const [editingMovement, setEditingMovement] = useState<ReturnType<typeof buildMovements>[number] | null>(null);
   const [deletingMovement, setDeletingMovement] = useState<ReturnType<typeof buildMovements>[number] | null>(null);
   const [viewingClosure, setViewingClosure] = useState<MonthlyClosure | null>(null);
@@ -56,6 +57,9 @@ export function AppShell() {
   const summary = calculateMonth(state, business.id, activeMonth);
   const closed = isMonthClosed(state, business.id, activeMonth);
   const movements = buildMovements(state, business.id, activeMonth);
+  const pendingClosureMonth = business.id ? findOldestPendingClosureMonth(state, business.id, activeMonth) : undefined;
+  const closingMonth = monthToClose ?? activeMonth;
+  const closingSummary = calculateMonth(state, business.id, closingMonth);
   const hasActiveBusiness = Boolean(business.id);
   const superAdminManagingBusiness = activeUser.role === "super_admin" && hasActiveBusiness;
   const globalSuperAdmin = activeUser.role === "super_admin" && !hasActiveBusiness;
@@ -175,7 +179,15 @@ export function AppShell() {
               movements={movements}
               closed={closed}
               activeMonth={activeMonth}
-              onCloseMonth={() => setCloseMonthOpen(true)}
+              pendingClosureMonth={pendingClosureMonth}
+              onClosePendingMonth={(month) => {
+                setMonthToClose(month);
+                setCloseMonthOpen(true);
+              }}
+              onCloseMonth={() => {
+                setMonthToClose(activeMonth);
+                setCloseMonthOpen(true);
+              }}
             />
           ) : null}
           {activeView === "reports" ? <Reports /> : null}
@@ -220,12 +232,16 @@ export function AppShell() {
       </Modal>
       <CloseMonthModal
         open={closeMonthOpen}
-        monthKeyValue={activeMonth}
-        summary={summary}
-        onClose={() => setCloseMonthOpen(false)}
-        onConfirm={(notes) => {
-          store.closeMonth(activeMonth, notes);
+        monthKeyValue={closingMonth}
+        summary={closingSummary}
+        onClose={() => {
           setCloseMonthOpen(false);
+          setMonthToClose(null);
+        }}
+        onConfirm={(notes) => {
+          store.closeMonth(closingMonth, notes);
+          setCloseMonthOpen(false);
+          setMonthToClose(null);
         }}
       />
       <DeleteMovementModal
@@ -394,17 +410,34 @@ function Dashboard({
   movements,
   closed,
   activeMonth,
+  pendingClosureMonth,
+  onClosePendingMonth,
   onCloseMonth,
 }: {
   summary: ReturnType<typeof calculateMonth>;
   movements: ReturnType<typeof buildMovements>;
   closed: boolean;
   activeMonth: string;
+  pendingClosureMonth?: string;
+  onClosePendingMonth: (month: string) => void;
   onCloseMonth: () => void;
 }) {
   const { business, canWrite } = useStore();
   return (
     <>
+      {pendingClosureMonth ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-ink">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-medium">
+              Hay un mes anterior pendiente por cerrar: <span className="capitalize">{monthName(pendingClosureMonth)}</span>
+            </p>
+            <Button variant="secondary" onClick={() => onClosePendingMonth(pendingClosureMonth)} disabled={!canWrite || !business.id}>
+              <CalendarCheck size={16} />
+              Cerrar <span className="capitalize">{monthName(pendingClosureMonth)}</span>
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div
         className={cn(
           "rounded-lg border px-4 py-3 text-sm",
@@ -651,7 +684,7 @@ function CloseMonthModal({
       <div className="grid gap-5">
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-ink">
           <p>
-            Estas a punto de cerrar el mes actual. Despues del cierre, los registros de este periodo quedaran
+            Estas a punto de cerrar <span className="font-semibold capitalize">{monthName(monthKeyValue)}</span>. Despues del cierre, los registros de este periodo quedaran
             bloqueados y no podran editarse a menos que un Super Admin reabra el mes.
           </p>
         </div>

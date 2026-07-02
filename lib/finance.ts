@@ -52,6 +52,22 @@ export function calculateMonth(state: AppState, businessId: string, activeMonth:
   return calculateFinancials(sales, expenses);
 }
 
+export function findOldestPendingClosureMonth(state: AppState, businessId: string, currentMonth: string) {
+  const movementMonths = new Set<string>();
+
+  state.dailySales
+    .filter((sale) => !sale.deletedAt && sale.businessId === businessId && getMonthKeyFromDate(sale.date) < currentMonth)
+    .forEach((sale) => movementMonths.add(getMonthKeyFromDate(sale.date)));
+
+  state.expenses
+    .filter((expense) => !expense.deletedAt && expense.businessId === businessId && getMonthKeyFromDate(expense.date) < currentMonth)
+    .forEach((expense) => movementMonths.add(getMonthKeyFromDate(expense.date)));
+
+  return [...movementMonths]
+    .filter((movementMonth) => !isMonthClosed(state, businessId, movementMonth))
+    .sort((a, b) => a.localeCompare(b))[0];
+}
+
 export function calculateRange(state: AppState, businessId: string, filters: ReportFilters) {
   const sales = state.dailySales.filter((sale) => {
     if (sale.deletedAt || sale.businessId !== businessId) return false;

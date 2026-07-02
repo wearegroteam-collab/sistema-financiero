@@ -30,6 +30,8 @@ export function SaleForm({ onDone, sale }: { onDone: () => void; sale?: DailySal
   const setTotal = (value: number) => setDraft((current) => ({ ...current, total: value }));
   const setDistribution = (updater: (current: Record<PaymentMethodKey, number>) => Record<PaymentMethodKey, number>) =>
     setDraft((current) => ({ ...current, distribution: updater(current.distribution) }));
+  const setMethodValue = (method: PaymentMethodKey, value: string) =>
+    setDistribution((current) => ({ ...current, [method]: value === "" ? 0 : Number(value) }));
   const setNotes = (value: string) => setDraft((current) => ({ ...current, notes: value }));
 
   const sum = useMemo(
@@ -72,10 +74,7 @@ export function SaleForm({ onDone, sale }: { onDone: () => void; sale?: DailySal
               type="number"
               min="0"
               value={distribution[method.key] || ""}
-              onChange={(event) =>
-                setDistribution((current) => ({ ...current, [method.key]: Number(event.target.value) }))
-              }
-              required
+              onChange={(event) => setMethodValue(method.key, event.target.value)}
             />
           </Field>
         ))}
