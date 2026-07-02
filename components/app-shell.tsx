@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { expenseCategories, paymentMethods, roleLabels } from "@/lib/constants";
+import { clearDraft, usePersistentDraft } from "@/lib/drafts";
 import { exportExcel, exportPdf } from "@/lib/export";
 import { buildMovements, calculateMonth, calculateRange, isMonthClosed, type ReportFilters } from "@/lib/finance";
 import { formatCurrency, formatDate, formatDateTime, formatPercent, monthKey, monthName } from "@/lib/format";
@@ -189,18 +190,30 @@ export function AppShell() {
           {activeView === "settings" ? <SettingsView /> : null}
         </div>
       </main>
-      <Modal title="Registrar venta diaria" open={saleOpen} onClose={() => setSaleOpen(false)}>
+      <Modal title="Registrar venta diaria" open={saleOpen} onClose={() => {
+        clearDraft(`sale-new:${business.id}`);
+        setSaleOpen(false);
+      }}>
         <SaleForm onDone={() => setSaleOpen(false)} />
       </Modal>
-      <Modal title="Registrar egreso" open={expenseOpen} onClose={() => setExpenseOpen(false)}>
+      <Modal title="Registrar egreso" open={expenseOpen} onClose={() => {
+        clearDraft(`expense-new:${business.id}`);
+        setExpenseOpen(false);
+      }}>
         <ExpenseForm onDone={() => setExpenseOpen(false)} />
       </Modal>
-      <Modal title="Editar venta diaria" open={editingMovement?.type === "sale"} onClose={() => setEditingMovement(null)}>
+      <Modal title="Editar venta diaria" open={editingMovement?.type === "sale"} onClose={() => {
+        if (editingMovement?.type === "sale") clearDraft(`sale-edit:${editingMovement.id}`);
+        setEditingMovement(null);
+      }}>
         {editingMovement?.type === "sale" && "distribution" in editingMovement.raw ? (
           <SaleForm sale={editingMovement.raw} onDone={() => setEditingMovement(null)} />
         ) : null}
       </Modal>
-      <Modal title="Editar egreso" open={editingMovement?.type === "expense"} onClose={() => setEditingMovement(null)}>
+      <Modal title="Editar egreso" open={editingMovement?.type === "expense"} onClose={() => {
+        if (editingMovement?.type === "expense") clearDraft(`expense-edit:${editingMovement.id}`);
+        setEditingMovement(null);
+      }}>
         {editingMovement?.type === "expense" && "paymentMethod" in editingMovement.raw ? (
           <ExpenseForm expense={editingMovement.raw} onDone={() => setEditingMovement(null)} />
         ) : null}
@@ -243,7 +256,10 @@ export function AppShell() {
           </div>
         ) : null}
       </Modal>
-      <Modal title="Mi perfil" open={Boolean(accountPanel)} onClose={() => setAccountPanel(null)}>
+      <Modal title="Mi perfil" open={Boolean(accountPanel)} onClose={() => {
+        clearDraft("profile-password-form");
+        setAccountPanel(null);
+      }}>
         <ProfilePanel initialMode={accountPanel ?? "profile"} onDone={() => setAccountPanel(null)} />
       </Modal>
     </div>
@@ -313,7 +329,7 @@ function UserMenu({
 function ProfilePanel({ initialMode, onDone }: { initialMode: "profile" | "password"; onDone: () => void }) {
   const { activeUser, changePassword } = useStore();
   const [mode, setMode] = useState<"profile" | "password">(initialMode);
-  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [form, setForm, clearPasswordForm] = usePersistentDraft("profile-password-form", { currentPassword: "", newPassword: "", confirmPassword: "" });
   const [submitting, setSubmitting] = useState(false);
 
   return (
@@ -347,7 +363,7 @@ function ProfilePanel({ initialMode, onDone }: { initialMode: "profile" | "passw
           const ok = await changePassword(form);
           setSubmitting(false);
           if (ok) {
-            setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+            clearPasswordForm();
             onDone();
           }
         }}>
@@ -361,7 +377,10 @@ function ProfilePanel({ initialMode, onDone }: { initialMode: "profile" | "passw
             <input className={inputClass} type="password" minLength={8} value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} required />
           </Field>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onDone}>Cancelar</Button>
+            <Button type="button" variant="secondary" onClick={() => {
+              clearPasswordForm();
+              onDone();
+            }}>Cancelar</Button>
             <Button type="submit" disabled={submitting}>{submitting ? "Actualizando..." : "Guardar contrasena"}</Button>
           </div>
         </form>
@@ -1018,7 +1037,7 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
   const [deletingBusiness, setDeletingBusiness] = useState<Business | null>(null);
   const [businessSubmitting, setBusinessSubmitting] = useState(false);
   const [userSubmitting, setUserSubmitting] = useState(false);
-  const [businessForm, setBusinessForm] = useState({
+  const emptyBusinessForm = {
     name: "",
     logoUrl: "",
     currency: "COP" as Business["currency"],
@@ -1026,41 +1045,49 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
     adminName: "",
     adminEmail: "",
     phone: "",
-  });
-  const [userForm, setUserForm] = useState({
+  };
+  const emptyUserForm = {
     businessId: business.id,
     name: "",
     email: "",
     role: "admin" as Role,
-  });
+  };
+  const [businessForm, setBusinessForm, clearBusinessForm] = usePersistentDraft("super-admin-business-form", emptyBusinessForm);
+  const [userForm, setUserForm, clearUserForm] = usePersistentDraft("super-admin-user-form", emptyUserForm);
 
   async function submitBusiness(event: FormEvent) {
     event.preventDefault();
     setBusinessSubmitting(true);
-    if (editingBusiness) {
-      await updateBusiness({
-        ...editingBusiness,
-        ...businessForm,
-      });
-      setEditingBusiness(null);
-    } else {
-      await createBusiness(
-        {
-          name: businessForm.name,
-          logoUrl: businessForm.logoUrl,
-          currency: businessForm.currency,
-          timezone: businessForm.timezone,
-          adminName: businessForm.adminName,
-          adminEmail: businessForm.adminEmail,
-          phone: businessForm.phone,
-        },
-        businessForm.adminName && businessForm.adminEmail
-          ? { name: businessForm.adminName, email: businessForm.adminEmail }
-          : undefined,
-      );
+    try {
+      let saved = false;
+      if (editingBusiness) {
+        saved = await updateBusiness({
+          ...editingBusiness,
+          ...businessForm,
+        });
+      } else {
+        saved = await createBusiness(
+          {
+            name: businessForm.name,
+            logoUrl: businessForm.logoUrl,
+            currency: businessForm.currency,
+            timezone: businessForm.timezone,
+            adminName: businessForm.adminName,
+            adminEmail: businessForm.adminEmail,
+            phone: businessForm.phone,
+          },
+          businessForm.adminName && businessForm.adminEmail
+            ? { name: businessForm.adminName, email: businessForm.adminEmail }
+            : undefined,
+        );
+      }
+      if (saved) {
+        setEditingBusiness(null);
+        clearBusinessForm();
+      }
+    } finally {
+      setBusinessSubmitting(false);
     }
-    setBusinessSubmitting(false);
-    setBusinessForm({ name: "", logoUrl: "", currency: "COP", timezone: "America/Bogota", adminName: "", adminEmail: "", phone: "" });
   }
 
   async function submitUser(event: FormEvent) {
@@ -1070,14 +1097,17 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
       return;
     }
     setUserSubmitting(true);
-    await createUser({
-      businessId: userForm.businessId,
-      name: userForm.name,
-      email: userForm.email,
-      role: userForm.role,
-    });
-    setUserSubmitting(false);
-    setUserForm({ businessId: business.id, name: "", email: "", role: "admin" });
+    try {
+      const saved = await createUser({
+        businessId: userForm.businessId,
+        name: userForm.name,
+        email: userForm.email,
+        role: userForm.role,
+      });
+      if (saved) clearUserForm();
+    } finally {
+      setUserSubmitting(false);
+    }
   }
 
   return (
@@ -1153,7 +1183,10 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
               <Button type="submit" disabled={businessSubmitting}>
                 {businessSubmitting ? (editingBusiness ? "Guardando..." : "Creando...") : (editingBusiness ? "Guardar negocio" : "Crear negocio")}
               </Button>
-              {editingBusiness ? <Button type="button" variant="secondary" onClick={() => setEditingBusiness(null)} disabled={businessSubmitting}>Cancelar</Button> : null}
+              <Button type="button" variant="secondary" onClick={() => {
+                setEditingBusiness(null);
+                clearBusinessForm();
+              }} disabled={businessSubmitting}>{editingBusiness ? "Cancelar" : "Limpiar"}</Button>
             </div>
           </form>
         </Section>
@@ -1192,7 +1225,10 @@ function SuperAdminPanel({ onEnterBusiness }: { onEnterBusiness: () => void }) {
               </select>
             </Field>
             <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
-            <Button type="submit" disabled={userSubmitting}>{userSubmitting ? "Enviando invitacion..." : "Crear usuario"}</Button>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={userSubmitting}>{userSubmitting ? "Enviando invitacion..." : "Crear usuario"}</Button>
+              <Button type="button" variant="secondary" onClick={clearUserForm} disabled={userSubmitting}>Limpiar</Button>
+            </div>
           </form>
         </Section>
       </div>
@@ -1275,7 +1311,7 @@ function SettingsView() {
   const [name, setName] = useState(business.name);
   const [currency, setCurrency] = useState(business.currency);
   const [timezone, setTimezone] = useState(business.timezone);
-  const [accountingUser, setAccountingUser] = useState({ name: "", email: "" });
+  const [accountingUser, setAccountingUser, clearAccountingUser] = usePersistentDraft(`accounting-user-form:${business.id}`, { name: "", email: "" });
   const [accountingSubmitting, setAccountingSubmitting] = useState(false);
   const businessUsers = state.users.filter((user) => user.businessId === business.id);
 
@@ -1314,21 +1350,27 @@ function SettingsView() {
                 event.preventDefault();
                 void (async () => {
                   setAccountingSubmitting(true);
-                  await createUser({
-                    businessId: business.id,
-                    name: accountingUser.name,
-                    email: accountingUser.email,
-                    role: "accountant",
-                  });
-                  setAccountingSubmitting(false);
-                  setAccountingUser({ name: "", email: "" });
+                  try {
+                    const saved = await createUser({
+                      businessId: business.id,
+                      name: accountingUser.name,
+                      email: accountingUser.email,
+                      role: "accountant",
+                    });
+                    if (saved) clearAccountingUser();
+                  } finally {
+                    setAccountingSubmitting(false);
+                  }
                 })();
               }}>
                 <h3 className="font-semibold text-ink">Crear usuario de Contabilidad</h3>
                 <Field label="Nombre"><input className={inputClass} value={accountingUser.name} onChange={(event) => setAccountingUser({ ...accountingUser, name: event.target.value })} required /></Field>
                 <Field label="Email"><input className={inputClass} type="email" value={accountingUser.email} onChange={(event) => setAccountingUser({ ...accountingUser, email: event.target.value })} required /></Field>
                 <p className="text-sm text-muted">El usuario recibira un correo para configurar su clave.</p>
-                <Button type="submit" disabled={accountingSubmitting}>{accountingSubmitting ? "Enviando invitacion..." : "Crear Contabilidad"}</Button>
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={accountingSubmitting}>{accountingSubmitting ? "Enviando invitacion..." : "Crear Contabilidad"}</Button>
+                  <Button type="button" variant="secondary" onClick={clearAccountingUser} disabled={accountingSubmitting}>Limpiar</Button>
+                </div>
               </form>
             ) : null}
           </div>

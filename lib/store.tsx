@@ -1,9 +1,10 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { toast } from "sonner";
+import { clearAllDrafts } from "./drafts";
 import { getAuthCallbackUrl } from "./auth-redirect";
 import { expenseCategories, paymentMethods } from "./constants";
 import { calculateMonth, getMonthKeyFromDate, isMonthClosed } from "./finance";
@@ -70,11 +71,11 @@ type StoreContextValue = {
   closeMonth: (monthKey: string, notes?: string) => Promise<void> | void;
   reopenMonth: (closureId: string) => Promise<void> | void;
   updateSettings: (business: Business, categories: ExpenseCategory[], methods: PaymentMethod[]) => Promise<void> | void;
-  createBusiness: (business: Omit<Business, "id" | "active"> & { active?: boolean }, admin?: { name: string; email: string }) => Promise<void> | void;
-  updateBusiness: (business: Business) => Promise<void> | void;
+  createBusiness: (business: Omit<Business, "id" | "active"> & { active?: boolean }, admin?: { name: string; email: string }) => Promise<boolean> | boolean;
+  updateBusiness: (business: Business) => Promise<boolean> | boolean;
   deactivateBusiness: (businessId: string) => Promise<void> | void;
   deleteBusiness: (businessId: string) => Promise<void> | void;
-  createUser: (user: Omit<User, "id" | "active"> & { active?: boolean }) => Promise<void> | void;
+  createUser: (user: Omit<User, "id" | "active"> & { active?: boolean }) => Promise<boolean> | boolean;
   updateUser: (user: User) => Promise<void> | void;
   deactivateUser: (userId: string) => Promise<void> | void;
   auditExport: (action: "download_pdf" | "export_excel" | "print", summary: string, businessId?: string) => Promise<void> | void;
@@ -110,8 +111,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => (useSupabase ? emptyState : readLocalState()));
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(useSupabase);
+  const [backgroundSync, setBackgroundSync] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
+  const currentBusinessIdRef = useRef("");
+  const hasLoadedOnceRef = useRef(false);
+  const refreshInFlightRef = useRef(false);
 
   const business = state.currentBusinessId
     ? state.businesses.find((item) => item.id === state.currentBusinessId) ?? fallbackBusiness
@@ -122,83 +127,95 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const canManageUsers = activeUser.active !== false && ["super_admin", "admin"].includes(activeUser.role);
   const canReopenMonths = activeUser.active !== false && activeUser.role === "super_admin";
 
+  useEffect(() => {
+    currentBusinessIdRef.current = state.currentBusinessId;
+  }, [state.currentBusinessId]);
+
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    setLoading(true);
-    const setupStatus = await getSetupStatus(supabase);
-    setSetupRequired(setupStatus.setupRequired);
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    const initialLoad = !hasLoadedOnceRef.current;
+    if (initialLoad) setLoading(true);
+    else setBackgroundSync(true);
+    try {
+      const setupStatus = await getSetupStatus(supabase);
+      setSetupRequired(setupStatus.setupRequired);
 
-    const { data: auth } = await supabase.auth.getSession();
-    setSession(auth.session);
+      const { data: auth } = await supabase.auth.getSession();
+      setSession(auth.session);
 
-    if (setupStatus.setupRequired) {
-      setState(emptyState);
+      if (setupStatus.setupRequired) {
+        if (initialLoad) setState(emptyState);
+        return;
+      }
+
+      if (!auth.session) {
+        if (initialLoad) setState(emptyState);
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", auth.session.user.id)
+        .single();
+
+      if (profileError || !profile) {
+        if (initialLoad) setState(emptyState);
+        return;
+      }
+
+      const user = mapUser(profile);
+      const allBusinessesQuery = supabase.from("businesses").select("*").order("created_at", { ascending: true });
+      const allUsersQuery = supabase.from("users").select("*").order("created_at", { ascending: true });
+      const businessScopedId = user.role === "super_admin" ? undefined : user.businessId;
+
+      const [
+        businessesResult,
+        usersResult,
+        salesResult,
+        expensesResult,
+        closuresResult,
+        paymentMethodsResult,
+        categoriesResult,
+        auditResult,
+      ] = await Promise.all([
+        allBusinessesQuery,
+        allUsersQuery,
+        scopedSelect(supabase.from("daily_sales").select("*").is("deleted_at", null).order("date", { ascending: false }), businessScopedId),
+        scopedSelect(supabase.from("expenses").select("*").is("deleted_at", null).order("date", { ascending: false }), businessScopedId),
+        scopedSelect(supabase.from("monthly_closures").select("*").order("closed_at", { ascending: false }), businessScopedId),
+        scopedSelect(supabase.from("payment_methods").select("*").eq("active", true), businessScopedId),
+        scopedSelect(supabase.from("categories").select("*").eq("active", true), businessScopedId),
+        scopedSelect(supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200), businessScopedId),
+      ]);
+
+      const businesses = (businessesResult.data ?? []).map(mapBusiness);
+      const selectedBusinessId = currentBusinessIdRef.current;
+      const currentBusinessId = user.role === "super_admin"
+        ? (selectedBusinessId && businesses.some((item) => item.id === selectedBusinessId) ? selectedBusinessId : "")
+        : user.businessId || "";
+
+      setState({
+        currentBusinessId,
+        activeUserId: user.id,
+        businesses,
+        users: (usersResult.data ?? []).map(mapUser),
+        dailySales: (salesResult.data ?? []).map(mapSale),
+        expenses: (expensesResult.data ?? []).map(mapExpense),
+        closures: (closuresResult.data ?? []).map(mapClosure),
+        paymentMethods: (paymentMethodsResult.data ?? []).map(mapPaymentMethod),
+        categories: (categoriesResult.data ?? []).map(mapCategory),
+        auditLogs: (auditResult.data ?? []).map(mapAuditLog),
+      });
+    } finally {
+      hasLoadedOnceRef.current = true;
+      refreshInFlightRef.current = false;
       setLoading(false);
-      return;
+      setBackgroundSync(false);
     }
-
-    if (!auth.session) {
-      setState(emptyState);
-      setLoading(false);
-      return;
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", auth.session.user.id)
-      .single();
-
-    if (profileError || !profile) {
-      setState(emptyState);
-      setLoading(false);
-      return;
-    }
-
-    const user = mapUser(profile);
-    const allBusinessesQuery = supabase.from("businesses").select("*").order("created_at", { ascending: true });
-    const allUsersQuery = supabase.from("users").select("*").order("created_at", { ascending: true });
-    const businessScopedId = user.role === "super_admin" ? undefined : user.businessId;
-
-    const [
-      businessesResult,
-      usersResult,
-      salesResult,
-      expensesResult,
-      closuresResult,
-      paymentMethodsResult,
-      categoriesResult,
-      auditResult,
-    ] = await Promise.all([
-      allBusinessesQuery,
-      allUsersQuery,
-      scopedSelect(supabase.from("daily_sales").select("*").is("deleted_at", null).order("date", { ascending: false }), businessScopedId),
-      scopedSelect(supabase.from("expenses").select("*").is("deleted_at", null).order("date", { ascending: false }), businessScopedId),
-      scopedSelect(supabase.from("monthly_closures").select("*").order("closed_at", { ascending: false }), businessScopedId),
-      scopedSelect(supabase.from("payment_methods").select("*").eq("active", true), businessScopedId),
-      scopedSelect(supabase.from("categories").select("*").eq("active", true), businessScopedId),
-      scopedSelect(supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200), businessScopedId),
-    ]);
-
-    const businesses = (businessesResult.data ?? []).map(mapBusiness);
-    const currentBusinessId = user.role === "super_admin"
-      ? (state.currentBusinessId && businesses.some((item) => item.id === state.currentBusinessId) ? state.currentBusinessId : "")
-      : user.businessId || "";
-
-    setState({
-      currentBusinessId,
-      activeUserId: user.id,
-      businesses,
-      users: (usersResult.data ?? []).map(mapUser),
-      dailySales: (salesResult.data ?? []).map(mapSale),
-      expenses: (expensesResult.data ?? []).map(mapExpense),
-      closures: (closuresResult.data ?? []).map(mapClosure),
-      paymentMethods: (paymentMethodsResult.data ?? []).map(mapPaymentMethod),
-      categories: (categoriesResult.data ?? []).map(mapCategory),
-      auditLogs: (auditResult.data ?? []).map(mapAuditLog),
-    });
-    setLoading(false);
-  }, [supabase, state.currentBusinessId]);
+  }, [supabase]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -288,6 +305,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setState(emptyState);
       setSession(null);
       setPasswordRecoveryActive(false);
+      clearAllDrafts();
       clearTemporaryCache();
       toast.success("Sesion cerrada");
     },
@@ -354,6 +372,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setState(emptyState);
       setSession(null);
       setPasswordRecoveryActive(false);
+      clearAllDrafts();
       clearTemporaryCache();
       if (typeof window !== "undefined") {
         window.history.replaceState(null, "", window.location.pathname);
@@ -736,33 +755,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createBusiness: async (newBusiness, admin) => {
       if (!canManageBusiness) {
         toast.error("Solo Super Admin puede crear negocios.");
-        return;
+        return false;
       }
       if (supabase) {
         const token = session?.access_token;
         if (!token) {
           toast.error("Sesion no valida.");
-          return;
+          return false;
         }
-        const response = await fetch("/api/admin/businesses", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            business: newBusiness,
-            admin,
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          toast.error(payload.error ?? "No se pudo crear el negocio");
-          return;
+        try {
+          const response = await fetch("/api/admin/businesses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              business: newBusiness,
+              admin,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            toast.error(payload.error ?? "No se pudo crear el negocio");
+            return false;
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "No se pudo conectar con Supabase.");
+          return false;
         }
         await refresh();
         toast.success("Negocio creado");
-        return;
+        return true;
       }
       const record: Business = { ...newBusiness, id: crypto.randomUUID(), active: newBusiness.active ?? true };
       const adminUser: User | null = admin?.email && admin.name
@@ -782,11 +806,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         currentBusinessId: record.id,
       }, "businesses", record.id, "create", "Negocio creado", undefined, { record, adminUser }));
       toast.success("Negocio creado");
+      return true;
     },
     updateBusiness: async (updatedBusiness) => {
       if (!canManageBusiness) {
         toast.error("Solo Super Admin puede editar negocios.");
-        return;
+        return false;
       }
       if (supabase) {
         const { error } = await supabase.from("businesses").update({
@@ -801,17 +826,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }).eq("id", updatedBusiness.id);
         if (error) {
           toast.error(error.message);
-          return;
+          return false;
         }
         await insertAudit("businesses", updatedBusiness.id, "update", "Negocio actualizado", business, updatedBusiness, updatedBusiness.id);
         await refresh();
         toast.success("Negocio actualizado");
-        return;
+        return true;
       }
       const previous = state.businesses.find((item) => item.id === updatedBusiness.id);
       const next = { ...state, businesses: state.businesses.map((item) => (item.id === updatedBusiness.id ? updatedBusiness : item)) };
       commitLocal(auditLocal(next, "businesses", updatedBusiness.id, "update", "Negocio actualizado", previous, updatedBusiness));
       toast.success("Negocio actualizado");
+      return true;
     },
     deactivateBusiness: async (businessId) => {
       if (!canManageBusiness) return;
@@ -860,40 +886,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createUser: async (user) => {
       if (!canManageUsers) {
         toast.error("Tu rol no permite crear usuarios.");
-        return;
+        return false;
       }
       if (supabase) {
         const token = session?.access_token;
         if (!token) {
           toast.error("Sesion no valida.");
-          return;
+          return false;
         }
-        const response = await fetch("/api/admin/users", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            businessId: user.businessId,
-            name: user.name,
-            email: user.email,
-            password: user.password,
-            role: user.role,
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          toast.error(payload.error ?? "No se pudo crear el usuario");
-          return;
+        try {
+          const response = await fetch("/api/admin/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              businessId: user.businessId,
+              name: user.name,
+              email: user.email,
+              password: user.password,
+              role: user.role,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            toast.error(payload.error ?? "No se pudo crear el usuario");
+            return false;
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "No se pudo conectar con Supabase.");
+          return false;
         }
         await refresh();
         toast.success("Usuario creado");
-        return;
+        return true;
       }
       const record: User = { ...user, id: crypto.randomUUID(), active: user.active ?? true };
       commitLocal(auditLocal({ ...state, users: [record, ...state.users] }, "users", record.id, "create", "Usuario creado", undefined, record));
       toast.success("Usuario creado");
+      return true;
     },
     updateUser: async (updatedUser) => {
       if (!canManageUsers) return;
